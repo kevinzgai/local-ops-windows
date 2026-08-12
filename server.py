@@ -3768,27 +3768,32 @@ def find_console_instances():
 
 
 def _launcher_dialog(message):
-    script = """on run argv
-set messageText to item 1 of argv
-display dialog messageText with title "总控台" buttons {"取消", "重新启动", "打开控制台"} default button "打开控制台" cancel button "取消" with icon note
-return button returned of result
-end run"""
+    """弹原生 popup。返回 "Restart" / "Open" / None。"""
+    body = (
+        "$r = (New-Object -ComObject WScript.Shell).Popup("
+        "'%s', 0, '总控台', 4 + 48); "
+        "if ($r -eq 6) { 'Restart' } elseif ($r -eq 7) { 'Open' }"
+        % message.replace("'", "''")
+    )
     try:
-        result = subprocess.run(
-            ["osascript", "-e", script, message], capture_output=True,
-            text=True, timeout=180)
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", body],
+            capture_output=True, text=True, errors="replace", timeout=180)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    return result.stdout.strip() if result.returncode == 0 else None
+    return r.stdout.strip() if r.returncode == 0 else None
 
 
 def _launcher_alert(message):
-    script = """on run argv
-display alert "总控台" message (item 1 of argv) as critical
-end run"""
+    body = (
+        "(New-Object -ComObject WScript.Shell).Popup("
+        "'%s', 0, '总控台', 0 + 48) | Out-Null"
+        % message.replace("'", "''")
+    )
     try:
-        subprocess.run(["osascript", "-e", script, message],
-                       capture_output=True, timeout=30)
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", body],
+            capture_output=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         pass
 
@@ -3811,12 +3816,12 @@ def launcher_main():
              if len(instances) > 1 else "")
     choice = _launcher_dialog(
         "总控台已在运行：\n" + "\n".join(labels) + extra)
-    if choice == "打开控制台":
+    if choice == "Open":
         ports = [p for item in instances for p in item["ports"]]
         port = min(ports) if ports else PORT_START
         webbrowser.open("http://%s:%d/" % (HOST, port))
         return
-    if choice != "重新启动":
+    if choice != "Restart":
         return
 
     preferred_ports = [p for item in instances for p in item["ports"]]
@@ -3848,7 +3853,8 @@ def schedule_console_restart(server, preferred_port):
     helper = subprocess.Popen(
         [sys.executable, os.path.abspath(__file__), "--restart-helper",
          str(SELF_PID), str(int(preferred_port))],
-        cwd=BASE_DIR, start_new_session=True, close_fds=True)
+        cwd=BASE_DIR, close_fds=True,
+        creationflags=platform_win.CREATE_NO_WINDOW)
 
     def _shutdown():
         time.sleep(0.25)

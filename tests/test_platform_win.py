@@ -141,6 +141,34 @@ class ProcessTreeTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("taskkill", str(m.call_args))
 
+    def test_terminate_job_returns_true_and_closes_handle(self):
+        with mock.patch("platform_win._ker.TerminateJobObject",
+                        return_value=1) as terminate, \
+             mock.patch("platform_win._ker.CloseHandle",
+                        return_value=1) as close:
+            self.assertTrue(pw.terminate_job(0xDEAD))
+        terminate.assert_called_once_with(0xDEAD, 1)
+        close.assert_called_once_with(0xDEAD)
+
+    def test_terminate_job_closes_even_when_terminate_fails(self):
+        with mock.patch("platform_win._ker.TerminateJobObject",
+                        return_value=0), \
+             mock.patch("platform_win._ker.CloseHandle",
+                        return_value=1) as close:
+            self.assertFalse(pw.terminate_job(0xBEEF))
+        close.assert_called_once_with(0xBEEF)
+
+    def test_terminate_job_handles_none_handle(self):
+        with mock.patch("platform_win._ker.CloseHandle") as close:
+            self.assertFalse(pw.terminate_job(None))
+        close.assert_not_called()
+
+    def test_take_job_returns_none_after_remove(self):
+        pw.register_job("once-app", 0xCAFE)
+        first = pw.take_job("once-app")
+        self.assertEqual(first, 0xCAFE)
+        self.assertIsNone(pw.take_job("once-app"))
+
 
 def psutil_no_such_proc():
     import psutil

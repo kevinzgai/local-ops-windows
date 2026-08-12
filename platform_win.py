@@ -179,12 +179,23 @@ def take_job(app_id):
 
 
 def terminate_job(job):
+    """终止 Job 内全部进程并关闭句柄；返回是否成功。
+
+    句柄闭必须由调用者负责：Job 是操作系统内核对象，不关就泄漏。
+    `take_job` 取出后所有权转移给此函数，调用方不应再 CloseHandle。
+    """
     if not job:
         return False
     try:
-        return bool(_ker.TerminateJobObject(job, 1))
+        ok = bool(_ker.TerminateJobObject(job, 1))
     except Exception:
-        return False
+        ok = False
+    finally:
+        try:
+            _ker.CloseHandle(job)
+        except Exception:
+            pass
+    return ok
 
 
 def spawn_command(command, cwd, token, env, log_fd, app_id):
@@ -193,9 +204,11 @@ def spawn_command(command, cwd, token, env, log_fd, app_id):
     受控身份：config 记录 lastPid=cmd pid、runToken=token；运行判定用
     process_tree(lastPid)（锚点 + 后代树），停止用 Job Object 或 taskkill /T。
 
-    使用 `shell=True` 让 Popen 直接通过 cmd.exe 内部执行命令，避免
-    list2cmdline 对内层引号的转义（`/s` 会剥离首尾引号、破坏带内层
-    引号的命令如 `python -c "import sys"`）。
+    `shell=True` 是必要的：原始 list 形式 `["cmd.exe", "/d", "/s", "/c", cmd]`
+    在 `subprocess.list2cmdline` 转义后含 4 个引号，cmd.exe 解析 `/s` 时会剥离
+    首尾引号，导致带内层引号的命令（如 `python -c "import sys"`）被破坏；
+    `shell=True` 让 Popen 直接把 command 交给 cmd.exe，不再做 list2cmdline
+    转义，cmd.exe 仍然作为锚点进程（Job Object / process_tree 仍基于此 pid）。
     """
     flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     proc = subprocess.Popen(

@@ -70,5 +70,24 @@ class SpawnStopTests(unittest.TestCase):
         self.assertEqual(done, 3)
 
 
+@unittest.skipUnless(WIN, "仅 Windows")
+class ClassifyTests(unittest.TestCase):
+    def test_system_path_is_background(self):
+        self.assertEqual(server.classify_group(
+            "foo:1", "foo", r"c:\windows\system32\foo.exe",
+            r"c:\windows\system32\foo.exe --x", None, set()), "background")
+
+    def test_dev_keyword_is_mine(self):
+        self.assertEqual(server.classify_group(
+            "n:9", "python.exe", "python.exe", "python app.py",
+            "C:\\a", set()), "mine")
+
+    def test_origin_self_console(self):
+        table = {1: (0, ""), server.SELF_PID: (1, "python server.py"),
+                 41: (server.SELF_PID, "cmd.exe")}
+        self.assertEqual(server.attribute_origin(41, table),
+                         {"label": "总控台", "icon": "rocket"})
+
+
 if __name__ == "__main__":
     unittest.main()

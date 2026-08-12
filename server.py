@@ -763,7 +763,11 @@ def pid_alive(pid):
 
 # ---------------------------------------------------------------- 状态构建
 
-SYSTEM_PATH_PREFIXES = ("/usr/libexec/", "/usr/sbin/", "/sbin/", "/System/", "/usr/lib/")
+SYSTEM_PATH_PREFIXES = (
+    r"C:\Windows\System32", r"C:\Windows\SysWOW64", r"C:\Windows" "\\",
+    r"C:\Program Files\WindowsApps", r"C:\Program Files\Common Files\Microsoft",
+    r"C:\Windows\WinSxS",
+)
 
 # 开发服务关键词：命中 name/args 时优先归为 "mine"（覆盖 .app 规则，
 # 例如 ollama 守护进程在 Ollama.app 内、Docker 在 Docker.app 内）
@@ -781,11 +785,15 @@ def classify_group(key, name, comm, args, cwd, promoted):
     text = name.lower()
     if any(k in text for k in DEV_KEYWORDS):
         return "mine"
-    if ".app/Contents/" in comm or ".app/Contents/" in args:
+    low_comm = (comm or "").lower()
+    low_args = (args or "").lower()
+    low_cwd = (cwd or "").lower()
+    if any(low_comm.startswith(prefix.lower()) or
+           low_comm.endswith(".exe") and prefix.lower() in low_comm
+           for prefix in SYSTEM_PATH_PREFIXES):
         return "background"
-    if comm.startswith(SYSTEM_PATH_PREFIXES):
-        return "background"
-    if "/Library/Containers/" in comm or "/Library/Containers/" in (cwd or ""):
+    if any("\\appdata\\local\\temps" in low_comm or
+           "\\windows\\" in low_comm):
         return "background"
     return "mine"
 
@@ -809,13 +817,9 @@ def project_name(cwd):
 
 # 向上爬时要跳过的包装层（按 argv[0] 基名匹配）：壳、包管理器与任务执行器
 _ORIGIN_SKIP_NAMES = {
-    "zsh", "bash", "sh", "dash", "fish", "login", "su", "sudo", "env",
-    "command", "xargs", "nohup", "setsid", "script", "expect", "caffeinate",
-    "launchd",
-    "npm", "npx", "pnpm", "yarn", "corepack", "make", "just",
-    "node", "tsx", "nodemon", "deno", "bun", "bunx",
-    "python", "python3", "uv", "poetry", "pip", "pipx",
-    "ruby", "php", "java", "dotnet", "go", "cargo",
+    "svchost.exe", "explorer.exe", "dwm.exe", "conhost.exe", "cmd.exe",
+    "powershell.exe", "pwsh.exe", "windowsappruntime.exe", "searchhost.exe",
+    "rundll32.exe", "runtimebroker.exe", "taskhostw.exe",
 }
 
 # 已知 AI 编程助手签名（在祖先 args 中做词边界匹配，按顺序取先命中者）
@@ -837,34 +841,15 @@ _ORIGIN_AGENT_PATTERNS = (
 
 # .app 包名 → (展示名, 图标)。未列出的包按原名 + package 图标展示
 _ORIGIN_APP_ALIASES = {
-    "visual studio code": ("VS Code", "code"),
-    "visual studio code - insiders": ("VS Code", "code"),
-    "cursor": ("Cursor", "code"),
-    "trae": ("Trae", "code"),
-    "windsurf": ("Windsurf", "code"),
-    "zed": ("Zed", "code"),
-    "sublime text": ("Sublime", "code"),
-    "webstorm": ("WebStorm", "code"),
-    "intellij idea": ("IDEA", "code"),
-    "goland": ("GoLand", "code"),
-    "pycharm": ("PyCharm", "code"),
-    "nova": ("Nova", "code"),
-    "xcode": ("Xcode", "code"),
-    "iterm2": ("iTerm", "terminal"),
-    "iterm": ("iTerm", "terminal"),
-    "terminal": ("终端", "terminal"),
-    "warp": ("Warp", "terminal"),
-    "kitty": ("kitty", "terminal"),
-    "alacritty": ("Alacritty", "terminal"),
-    "wezterm": ("WezTerm", "terminal"),
-    "docker": ("Docker", "package"),
-    "ollama": ("Ollama", "package"),
-    "obsidian": ("Obsidian", "package"),
+    "code.exe": ("VS Code", "code"),
+    "cursor.exe": ("Cursor", "code"),
+    "intellij idea.exe": ("IntelliJ IDEA", "code"),
+    "clion.exe": ("CLion", "code"),
+    "pycharm64.exe": ("PyCharm", "code"),
+    "windows terminal.exe": ("Windows Terminal", "terminal"),
+    "wt.exe": ("Windows Terminal", "terminal"),
 }
-_ORIGIN_BUNDLE_RE = re.compile(r"/([^/]+)\.app/Contents/MacOS/", re.I)
-
-# 终端复用器（直接以 comm 命名，不进跳过表）
-_ORIGIN_MULTIPLEXERS = {"tmux": "tmux", "screen": "screen"}
+_ORIGIN_MULTIPLEXERS = {}
 
 
 def origin_snapshot():
@@ -903,18 +888,14 @@ def attribute_origin(pid, table):
         parent_args = (table.get(ppid) or (0, ""))[1] or ""
         if ppid <= 1:
             return candidate or {"label": "系统", "icon": "server"}
+        if ppid == SELF_PID:
+            return {"label": "总控台", "icon": "rocket"}
         if RUN_TOKEN_ARG_PREFIX in parent_args:
             return {"label": "总控台", "icon": "rocket"}
         hay = parent_args.casefold()
         for pattern, label in _ORIGIN_AGENT_PATTERNS:
             if pattern.search(hay):
                 return {"label": label, "icon": "bot"}
-        bundle = _ORIGIN_BUNDLE_RE.search(parent_args)
-        if bundle:
-            app_name = bundle.group(1)
-            label, icon = _ORIGIN_APP_ALIASES.get(
-                app_name.casefold(), (app_name, "package"))
-            return {"label": label, "icon": icon}
         base = os.path.basename(
             parent_args.split()[0]).lstrip("-") if parent_args.split() else ""
         if base in _ORIGIN_MULTIPLEXERS:
@@ -997,7 +978,7 @@ def build_watched(keywords):
         if pid == SELF_PID or info.get("uid") != SELF_UID:
             continue
         name = os.path.basename(info.get("comm") or "") or "?"
-        if name in ("ps", "lsof"):
+        if name in ("ps.exe", "lsof", "taskkill.exe", "cmd.exe"):
             continue
         args = info.get("args") or ""
         args_lower = args.casefold()

@@ -119,6 +119,15 @@ LOG = logging.getLogger("console")
 LOG_LOCK = threading.RLock()
 MANUAL_STOP_LOCK = threading.RLock()
 MANUAL_STOP_TOKENS = set()
+_app_id_by_anchor = {}
+
+
+def _remember_anchor(app_id, anchor_pid):
+    _app_id_by_anchor[anchor_pid] = app_id
+
+
+def _forget_anchor(anchor_pid):
+    _app_id_by_anchor.pop(anchor_pid, None)
 
 
 def classify_task_exit(code):
@@ -1005,61 +1014,37 @@ def build_watched(keywords):
 
 
 def pgid_members_map():
-    """ps -axo pid=,pgid= → {pgid: [pid, ...]}。
-    进程退出后其子孙仍保留原 pgid（被 launchd 收养也不变），
-    因此按 pgid 能找到「脚本把服务放后台后自己退出」的存活成员。"""
-    groups = {}
-    for line in run_cmd(["ps", "-axo", "pid=,pgid="]).splitlines():
-        parts = line.split()
-        if len(parts) != 2:
-            continue
-        try:
-            pid, pgid = int(parts[0]), int(parts[1])
-        except ValueError:
-            continue
-        groups.setdefault(pgid, []).append(pid)
-    return groups
+    """Windows：无 pgid 概念，返回空 map（保留调用点兼容）。"""
+    return {}
 
 
 def _managed_candidates(app, groups):
-    token = app.get("runToken")
-    pgid = app.get("lastPgid") or app.get("lastPid")
-    if not isinstance(token, str) or not token or not isinstance(pgid, int) or pgid <= 0:
+    pid = app.get("lastPid")
+    if not isinstance(pid, int) or pid <= 0:
         return set()
-    return set(groups.get(pgid, []))
+    return set(platform.process_tree(pid))
 
 
 def managed_process_index(apps, groups=None):
-    """批量校验应用的受控进程，返回 (appId -> [pid], ps, groups)。
-
-    必须同时满足：属于记录的进程组、属于当前用户、argv 中带本次启动的
-    随机 token。即使 PID/PGID 被系统复用，也不会把无关进程当成应用或停止它。
-    """
-    if groups is None:
-        needs_groups = any(
-            app.get("runToken")
-            and isinstance(app.get("lastPgid") or app.get("lastPid"), int)
-            for app in apps)
-        groups = pgid_members_map() if needs_groups else {}
+    """Windows 版：受控进程= 锚点 lastPid 的存活同用户进程树。"""
     candidates = {}
     all_pids = set()
     for app in apps:
         pids = _managed_candidates(app, groups)
-        candidates[app.get("id")] = pids
+        candidates[app["id"]] = pids
         all_pids.update(pids)
-    snap = ps_snapshot(all_pids, with_uid=True) if all_pids else {}
+    snap = platform.ps_snapshot(all_pids) if all_pids else {}
     result = {}
     for app in apps:
-        token = app.get("runToken")
-        marker = RUN_TOKEN_ARG_PREFIX + token if token else None
-        current_user = sorted(
-            pid for pid in candidates.get(app.get("id"), set())
-            if snap.get(pid, {}).get("uid") == SELF_UID)
-        controller_found = bool(marker and any(
-            marker in snap.get(pid, {}).get("args", "") for pid in current_user))
-        # 随机标记在进程组的常驻外层 shell 上；校验后整组均为受控后代。
-        result[app.get("id")] = current_user if controller_found else []
-    return result, snap, groups
+        pid = app.get("lastPid")
+        member = candidates.get(app.get("id")) or set()
+        live = sorted(
+            p for p in member
+            if p in snap and snap[p].get("uid") == SELF_UID)
+        if pid not in live:
+            live = []
+        result[app["id"]] = live
+    return result, snap, {}
 
 
 def managed_pids(app, groups=None):
@@ -1409,40 +1394,21 @@ def kill_process(pid, force):
     """结束单个进程；只允许当前用户的进程。返回 (ok, error)。"""
     if pid == SELF_PID:
         return False, "不能结束总控台自身进程"
-    uid = process_uid(pid)
-    if uid is None:
-        return False, "进程不存在"
-    if uid != SELF_UID:
-        return False, "只能结束当前用户的进程"
-    sig = signal.SIGKILL if force else signal.SIGTERM
-    try:
-        os.kill(pid, sig)
-    except ProcessLookupError:
-        return False, "进程不存在"
-    except PermissionError:
-        return False, "没有权限结束该进程"
-    except OSError as e:
-        return False, "结束失败: %s" % e
+    if not platform.same_user(pid):
+        return False, "只允许结束当前用户的进程"
+    members = platform.process_tree(pid)
+    platform.terminate_pids(members, force=bool(force))
     return True, None
 
 
-def stop_pid_tree(pid, sig=signal.SIGTERM):
-    """向受控进程组发信号；返回 (ok, error)。
-
-    ProcessLookupError means the target completed between validation and the
-    signal and is therefore an idempotent success. Permission and other OS
-    failures must never be swallowed: callers use them to retain management
-    identity instead of creating an orphan process.
-    """
-    try:
-        os.killpg(int(pid), sig)
-        return True, None
-    except ProcessLookupError:
-        return True, None
-    except PermissionError:
-        return False, "没有权限停止受控进程组"
-    except OSError as e:
-        return False, "停止受控进程组失败: %s" % e
+def stop_pid_tree(pid, sig=None):
+    """终止受控进程树：优先 Job Object，回退 taskkill /T。"""
+    app_id = _app_id_by_anchor.get(pid)
+    if app_id:
+        job = platform.take_job(app_id)
+        if platform.terminate_job(job):
+            return True, None
+    return platform.kill_tree(pid)
 
 
 def app_running(app, listeners=None):
@@ -1457,67 +1423,65 @@ def app_alive_sign(app, listeners=None):
 def build_launch_env(token, environ=None):
     """构建无 Terminal 启动时仍可找到常见开发工具的环境。
 
-    Finder/LSUIElement 启动的应用通常只有系统 PATH，不会读取用户 shell 配置；
-    因此显式补入 Homebrew、npm/pnpm、Volta、NVM、fnm 等常见目录。
+    Windows 启动器（无 shell）只继承系统 PATH；显式补入 npm/Yarn/Volta/Bun/
+    scoop/NVM/Chocolatey 常见目录与 System32，保证 node/npm 等可用。
     """
     env = dict(os.environ if environ is None else environ)
     home = os.path.expanduser("~")
-    preferred = [
-        os.path.join(home, ".local", "bin"),
+    appdata = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+    local = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+    preferred = []
+    for base in (appdata, local):
+        preferred.append(os.path.join(base, "npm"))
+        preferred.append(os.path.join(base, "Yarn", "bin"))
+    preferred.extend([
         os.path.join(home, ".volta", "bin"),
         os.path.join(home, ".bun", "bin"),
-        os.path.join(home, "Library", "pnpm"),
-        os.path.join(home, ".asdf", "shims"),
-        "/opt/homebrew/bin", "/opt/homebrew/sbin",
-        "/usr/local/bin", "/usr/local/sbin",
-    ]
+        os.path.join(home, "scoop", "shims"),
+        r"C:\Program Files\nodejs",
+        os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32"),
+    ])
     preferred.extend(sorted(
-        glob.glob(os.path.join(home, ".nvm", "versions", "node", "*", "bin")),
+        glob.glob(os.path.join(home, ".nvm", "versions", "node", "*")),
         reverse=True))
-    preferred.extend(sorted(
-        glob.glob(os.path.join(home, ".fnm", "node-versions", "*", "installation", "bin")),
-        reverse=True))
+    choco = os.environ.get("ChocolateyInstall")
+    if choco:
+        preferred.append(os.path.join(choco, "bin"))
     preferred.extend((env.get("PATH") or "").split(os.pathsep))
-    preferred.extend(("/usr/bin", "/bin", "/usr/sbin", "/sbin"))
     seen = set()
     env["PATH"] = os.pathsep.join(
         path for path in preferred if path and not (path in seen or seen.add(path)))
-    env.setdefault("PNPM_HOME", os.path.join(home, "Library", "pnpm"))
     env[RUN_TOKEN_ENV] = token
     return env
 
 
 def start_app(app):
-    """返回 (ok, error, proc|None, pgid|None, token|None)。"""
+    """返回 (ok, error, proc|None, pgid|None, token|None)。
+
+    Windows：以 cmd.exe 为锚点；进程组语义由 Job Object 收紧，运行判定
+    仍走 cmd pid + 后代 psutil 树；停止优先 Job，兜底 taskkill /T。
+    """
     _ensure_private_dir(LOGS_DIR)
     log_path = os.path.join(LOGS_DIR, "%s.log" % app["id"])
     rotate_log_file(log_path)
     cwd = app.get("cwd") or os.path.expanduser("~")
     try:
-        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND,
-                         0o600)
+        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
         logf = os.fdopen(log_fd, "ab", buffering=0)
     except OSError as e:
         return False, "无法打开日志文件: %s" % e, None, None, None
     token = secrets.token_urlsafe(24)
     env = build_launch_env(token)
-    marker = RUN_TOKEN_ARG_PREFIX + token
-    # 外层 shell 在 argv[0] 中持有随机标记并等待内层；内层等待用户命令
-    # 留下的后台作业。因此进程组既可验证，也不会因启动脚本过早退出而失去锚点。
-    outer_script = '/bin/bash -c "$1"\nconsole_status=$?\nexit "$console_status"'
-    inner_script = (app["command"] +
-                    '\nconsole_status=$?\nwait\nexit "$console_status"')
     try:
         header = "\n===== 启动于 %s =====\n" % time.strftime("%Y-%m-%d %H:%M:%S")
         logf.write(header.encode("utf-8"))
-        proc = subprocess.Popen(
-            ["/bin/bash", "-c", outer_script, marker, inner_script],
-            cwd=cwd, stdout=logf, stderr=subprocess.STDOUT,
-            start_new_session=True, env=env)
+        proc, _job = platform.spawn_command(
+            app["command"], cwd, token, env, log_fd, app.get("id") or "")
+        _remember_anchor(app["id"], proc.pid)
     except Exception as e:
         logf.close()
         return False, "启动失败: %s" % e, None, None, None
-    logf.close()  # 子进程已持有副本，父进程关闭避免 fd 泄漏
+    logf.close()
     return True, None, proc, proc.pid, token
 
 
@@ -1592,12 +1556,15 @@ def persist_started_app(cfg, app_id, proc, pgid, token):
 
 def clear_app_runtime(cfg, app_id, expected_token=None, last_exit=None):
     """清除受控身份；可用 token 防竞态，并可原子写入本次退出结果。"""
+    last_pid = None
     def op(c):
+        nonlocal last_pid
         target = find_app(c, app_id)
         if not target:
             return False
         if expected_token is not None and target.get("runToken") != expected_token:
             return False
+        last_pid = target.get("lastPid")
         target["lastPid"] = None
         target["lastPgid"] = None
         target["runToken"] = None
@@ -1605,7 +1572,10 @@ def clear_app_runtime(cfg, app_id, expected_token=None, last_exit=None):
         if last_exit is not None:
             target["lastExit"] = last_exit
         return True
-    return cfg.update(op)
+    saved = cfg.update(op)
+    if saved and isinstance(last_pid, int) and last_pid > 0:
+        _forget_anchor(last_pid)
+    return saved
 
 
 def stop_app_for_update(cfg, app, timeout=5.0):
@@ -2091,21 +2061,6 @@ def detect_project(root):
     }, None
 
 
-def _current_user_group_members(pgid):
-    """Return live current-user members of a previously verified group.
-
-    Once SIGTERM is sent the token-bearing controller may exit before a child
-    that ignores SIGTERM.  Requiring the marker again would incorrectly report
-    success, so the wait phase follows the already-verified PGID until empty.
-    """
-    members = pgid_members_map().get(pgid, [])
-    if not members:
-        return []
-    snap = ps_snapshot(members, with_uid=True)
-    return sorted(pid for pid in members
-                  if snap.get(pid, {}).get("uid") == SELF_UID)
-
-
 def resolve_app_stop_target(app, listeners=None):
     """Resolve and validate a stop target before any signal is sent."""
     current = managed_pids(app)
@@ -2144,44 +2099,19 @@ def resolve_app_stop_target(app, listeners=None):
     return None, "无法确认受控进程，未执行停止"
 
 
-def signal_app_stop(target, sig=signal.SIGTERM):
-    """Signal a target returned by resolve_app_stop_target."""
+def signal_app_stop(target, sig=None):
     ident = target["id"]
-    if target["kind"] == "group":
-        return stop_pid_tree(ident, sig)
-    try:
-        os.kill(ident, sig)
-        return True, None
-    except ProcessLookupError:
-        return True, None
-    except PermissionError:
-        return False, "没有权限停止受控进程"
-    except OSError as e:
-        return False, "停止受控进程失败: %s" % e
+    ok, err = stop_pid_tree(ident)
+    return ok, err
 
 
 def stop_target_alive(target, expected_uid=None):
-    if target["kind"] == "group":
-        try:
-            os.killpg(target["id"], 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        except OSError:
-            return True
-    try:
-        os.kill(target["id"], 0)
-        if expected_uid is None:
-            expected_uid = process_uid(target["id"])
-        return expected_uid == SELF_UID
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return True
+    members = platform.process_tree(target["id"])
+    return any(platform.same_user(m) for m in members)
+
+
+def _current_user_group_members(pgid):
+    return [p for p in platform.process_tree(pgid) if platform.same_user(p)]
 
 
 def stop_app_and_wait(app, timeout=APP_STOP_TIMEOUT_SEC, listeners=None):
@@ -3746,6 +3676,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self.server.cfg.update(op):
             self.send_err(404, "应用不存在")
             return
+        last_pid = app.get("lastPid")
+        if isinstance(last_pid, int) and last_pid > 0:
+            _forget_anchor(last_pid)
         self.server.forget_app_lock(app_id)
 
         for ext in ICON_EXTS:

@@ -113,5 +113,39 @@ def psutil_denied():
     return psutil.AccessDenied()
 
 
+class ProcessTreeTests(unittest.TestCase):
+    def test_tree_includes_descendants(self):
+        parent = mock.Mock()
+        child2 = mock.Mock(pid=5)
+        parent.pid = 1
+        parent.children.return_value = [child2]
+        with mock.patch("platform_win.psutil.Process",
+                        return_value=parent):
+            self.assertEqual(pw.process_tree(1), [1, 5])
+
+    def test_tree_empty_when_missing(self):
+        with mock.patch("platform_win.psutil.Process",
+                        side_effect=psutil_no_such_proc()):
+            self.assertEqual(pw.process_tree(999), [])
+
+    def test_quote_cmd(self):
+        self.assertEqual(pw.quote_cmd(r"C:\proj 文件\app.py"),
+                         '"C:\\proj 文件\\app.py"')
+
+    def test_kill_tree_ok(self):
+        r = mock.Mock(returncode=0)
+        with mock.patch("platform_win.subprocess.run",
+                        return_value=r) as m:
+            ok, err = pw.kill_tree(99)
+        self.assertIsNone(err)
+        self.assertTrue(ok)
+        self.assertIn("taskkill", str(m.call_args))
+
+
+def psutil_no_such_proc():
+    import psutil
+    return psutil.NoSuchProcess(999)
+
+
 if __name__ == "__main__":
     unittest.main()

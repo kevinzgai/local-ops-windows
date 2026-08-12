@@ -6,8 +6,12 @@
 psutil 是本移植唯一第三方依赖。
 """
 
+import ctypes
 import os
+import subprocess
+import threading
 import time
+from ctypes import wintypes
 
 import psutil
 
@@ -120,3 +124,132 @@ def origin_snapshot():
         args = " ".join(cl) if isinstance(cl, list) else (info.get("name") or "")
         table[pid] = (ppid, args)
     return table
+
+
+_ker = ctypes.WinDLL("kernel32", use_last_error=True)
+_ker.CreateJobObjectW.restype = wintypes.HANDLE
+_ker.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+_ker.AssignProcessToJobObject.restype = wintypes.BOOL
+_ker.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+_ker.TerminateJobObject.restype = wintypes.BOOL
+_ker.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+_ker.CloseHandle.argtypes = (wintypes.HANDLE,)
+_ker.CloseHandle.restype = wintypes.BOOL
+
+JOBS = {}
+JOBS_GUARD = threading.Lock()
+
+CREATE_NO_WINDOW = 0x08000000
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+
+def quote_cmd(s):
+    """cmd.exe 安全引用：整体双引号包裹，内含双引号转义。"""
+    return '"' + str(s).replace('"', '\\"') + '"'
+
+
+def _create_job():
+    return _ker.CreateJobObjectW(None, None)
+
+
+def _assign(job, process_handle):
+    return bool(_ker.AssignProcessToJobObject(job, process_handle))
+
+
+def create_job_for(app_id, proc):
+    """尝试把子进程放入 Job Object；失败时降级为仅进程树追踪。"""
+    job = _create_job()
+    if not job or not _assign(job, proc._handle):
+        if job:
+            _ker.CloseHandle(job)
+        return None
+    with JOBS_GUARD:
+        JOBS[app_id] = job
+    return job
+
+
+def register_job(app_id, job):
+    with JOBS_GUARD:
+        JOBS[app_id] = job
+
+
+def take_job(app_id):
+    with JOBS_GUARD:
+        return JOBS.pop(app_id, None)
+
+
+def terminate_job(job):
+    if not job:
+        return False
+    try:
+        return bool(_ker.TerminateJobObject(job, 1))
+    except Exception:
+        return False
+
+
+def spawn_command(command, cwd, token, env, log_fd, app_id):
+    """启动 cmd 锚点进程；返回 (proc, job|None)。
+
+    受控身份：config 记录 lastPid=cmd pid、runToken=token；运行判定用
+    process_tree(lastPid)（锚点 + 后代树），停止用 Job Object 或 taskkill /T。
+
+    使用 `shell=True` 让 Popen 直接通过 cmd.exe 内部执行命令，避免
+    list2cmdline 对内层引号的转义（`/s` 会剥离首尾引号、破坏带内层
+    引号的命令如 `python -c "import sys"`）。
+    """
+    flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    proc = subprocess.Popen(
+        command,
+        cwd=cwd, stdout=log_fd, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL, env=env, creationflags=flags,
+        shell=True)
+    job = create_job_for(app_id, proc)
+    return proc, job
+
+
+def process_tree(pid):
+    """[anchor_pid] + 后代（递归）。缺进程/受限时只给 锚点或空。"""
+    if not isinstance(pid, int) or pid <= 0:
+        return []
+    try:
+        proc = psutil.Process(pid)
+    except psutil.Error:
+        return []
+    members = [pid]
+    try:
+        members.extend(ch.pid for ch in proc.children(recursive=True))
+    except psutil.Error:
+        pass
+    return members
+
+
+def kill_tree(pid):
+    """taskkill /T /F 兜底杀进程树；返回 (ok, error)。"""
+    try:
+        r = subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            capture_output=True, text=True, errors="replace",
+            timeout=5, creationflags=CREATE_NO_WINDOW)
+        return r.returncode == 0, None
+    except Exception as e:
+        return False, str(e)
+
+
+def terminate_pids(pids, force):
+    """终止一组 pid（先子后父）；force=True 用 kill()，否则 terminate()。
+
+    Windows 上 `proc.terminate()` 与 `proc.kill()` 行为相同（TerminateProcess），
+    仍保留分层语义供跨平台意图清晰。
+    """
+    killed = []
+    for p in reversed(list(pids)):
+        try:
+            proc = psutil.Process(p)
+            if force:
+                proc.kill()
+            else:
+                proc.terminate()
+            killed.append(p)
+        except psutil.Error:
+            continue
+    return killed

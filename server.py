@@ -791,6 +791,8 @@ def classify_group(key, name, comm, args, cwd, promoted):
     if any(low_comm.startswith(prefix.lower()) or
            low_comm.endswith(".exe") and prefix.lower() in low_comm
            for prefix in SYSTEM_PATH_PREFIXES):
+        # C:\Windows\ is the canonical Windows system root; the bare C:\
+        # would over-match user data, so the trailing slash is required.
         return "background"
     if any("\\appdata\\local\\temps" in low_comm or
            "\\windows\\" in low_comm):
@@ -900,6 +902,10 @@ def attribute_origin(pid, table):
             parent_args.split()[0]).lstrip("-") if parent_args.split() else ""
         if base in _ORIGIN_MULTIPLEXERS:
             return {"label": _ORIGIN_MULTIPLEXERS[base], "icon": "terminal"}
+        alias = _ORIGIN_APP_ALIASES.get(base.lower())
+        if alias is not None:
+            label, icon = alias
+            return {"label": label, "icon": icon}
         if base and base not in _ORIGIN_SKIP_NAMES and candidate is None:
             candidate = {"label": base, "icon": "package"}
         cur = ppid

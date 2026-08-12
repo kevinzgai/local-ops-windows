@@ -88,6 +88,18 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(server.attribute_origin(41, table),
                          {"label": "总控台", "icon": "rocket"})
 
+    def test_origin_code_exe_alias(self):
+        # Parent process is Code.exe; child pid=99 has ppid=77 (Code.exe).
+        # Without _ORIGIN_APP_ALIASES wiring, child would fall through to
+        # the generic basename candidate ("Code.exe", icon "package").
+        # Note: attribute_origin uses parent_args.split()[0] which breaks
+        # on paths with spaces; using a no-space path here exercises the
+        # alias lookup, not the quote-splitting heuristic.
+        table = {1: (0, ""), 77: (1, r"C:\Code\Code.exe"),
+                 99: (77, "node server.js")}
+        self.assertEqual(server.attribute_origin(99, table),
+                         {"label": "VS Code", "icon": "code"})
+
 
 if __name__ == "__main__":
     unittest.main()

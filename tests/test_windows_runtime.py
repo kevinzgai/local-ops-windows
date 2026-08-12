@@ -120,5 +120,19 @@ class PickAndCommandTests(unittest.TestCase):
         self.assertEqual(platform_win.quote_cmd("a b c"), '"a b c"')
 
 
+@unittest.skipUnless(WIN, "仅 Windows")
+class DetectTests(unittest.TestCase):
+    def test_static_site_hint(self):
+        d = tempfile.mkdtemp(prefix="det-")
+        try:
+            open(os.path.join(d, "index.html"), "w").write("<html></html>")
+            result, err = server.detect_project(d)
+            self.assertIsNone(err)
+            cmds = [c["command"] for c in result["candidates"]]
+            self.assertIn("python -m http.server 8000", cmds)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 PYTHON ?= python3
 DIST_DIR ?= dist
 
-.PHONY: check syntax test release-check release release-verify dev-setup generate-icons generate-brand
+.PHONY: check syntax test release-check release release-verify dev-setup generate-icons generate-brand win-check
 
 check:
 	$(PYTHON) tools/check_project.py
@@ -30,3 +30,9 @@ generate-icons:
 
 generate-brand:
 	$(PYTHON) tools/gen_brand_assets.py
+
+# Windows：没有 make。请改用：
+#   powershell -ExecutionPolicy Bypass -File tools/run_tests.ps1
+
+win-check:
+	powershell -ExecutionPolicy Bypass -File tools/run_tests.ps1

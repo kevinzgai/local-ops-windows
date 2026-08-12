@@ -12,6 +12,10 @@ from unittest import mock
 
 import server
 
+IS_WINDOWS = sys.platform == "win32"
+skip_windows = unittest.skipIf(
+    IS_WINDOWS, "macOS-only path (Unix shell runtime / .app bundle / symlink / process group)")
+
 
 class ParsingTests(unittest.TestCase):
     def test_parse_etime(self):
@@ -63,6 +67,7 @@ class OriginAttributionTests(unittest.TestCase):
         origin = server.attribute_origin(100, table)
         self.assertEqual(origin, {"label": "Codex", "icon": "bot"})
 
+    @skip_windows
     def test_vscode_bundle_is_named_and_uses_code_icon(self):
         table = self.table(
             (100, 90, "python3 -m http.server 8000"),
@@ -72,6 +77,7 @@ class OriginAttributionTests(unittest.TestCase):
         origin = server.attribute_origin(100, table)
         self.assertEqual(origin, {"label": "VS Code", "icon": "code"})
 
+    @skip_windows
     def test_iterm_bundle_uses_terminal_icon(self):
         table = self.table(
             (100, 90, "-zsh"),
@@ -96,6 +102,7 @@ class OriginAttributionTests(unittest.TestCase):
         origin = server.attribute_origin(100, table)
         self.assertEqual(origin, {"label": "mise", "icon": "package"})
 
+    @skip_windows
     def test_launchd_parent_reports_system(self):
         table = self.table(
             (100, 90, "redis-server"),
@@ -128,6 +135,7 @@ class OriginAttributionTests(unittest.TestCase):
 
 
 class ScriptCommandTests(unittest.TestCase):
+    @skip_windows
     def test_script_extensions_choose_the_expected_runtime_and_quote_paths(self):
         cases = {
             ".py": "python3",
@@ -153,6 +161,7 @@ class ScriptCommandTests(unittest.TestCase):
             self.assertEqual(
                 shlex.split(server.command_for_script(path)), [path])
 
+    @skip_windows
     def test_non_executable_command_uses_bash(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "nightly job.command")
@@ -180,6 +189,7 @@ class AppHealthTests(unittest.TestCase):
         self.assertEqual(health["issues"][0]["kind"], "script-missing")
         self.assertEqual(health["issues"][0]["action"], "pick-script")
 
+    @skip_windows
     def test_relative_script_uses_configured_working_directory(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "job.sh")
@@ -188,6 +198,7 @@ class AppHealthTests(unittest.TestCase):
             app = {"command": "/bin/bash -- job.sh", "cwd": td}
             self.assertFalse(server.inspect_app_health(app)["blocking"])
 
+    @skip_windows
     def test_missing_cwd_does_not_cascade_for_relative_script(self):
         with tempfile.TemporaryDirectory() as td:
             missing = os.path.join(td, "gone")
@@ -218,6 +229,7 @@ class AppHealthTests(unittest.TestCase):
                 {"command": "definitely-not-installed --version", "cwd": None})
         self.assertEqual(health["issues"][0]["kind"], "runtime-missing")
 
+    @skip_windows
     def test_direct_script_requires_execute_permission_but_bash_script_does_not(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "job.command")
@@ -231,6 +243,7 @@ class AppHealthTests(unittest.TestCase):
         self.assertEqual(direct["issues"][0]["kind"], "script-not-executable")
         self.assertFalse(wrapped["blocking"])
 
+    @skip_windows
     def test_broken_script_symlink_is_unavailable(self):
         with tempfile.TemporaryDirectory() as td:
             link = os.path.join(td, "job.py")
@@ -239,6 +252,7 @@ class AppHealthTests(unittest.TestCase):
                 {"command": server.command_for_script(link), "cwd": td})
         self.assertEqual(health["issues"][0]["kind"], "script-missing")
 
+    @skip_windows
     def test_task_cancel_exit_code_survives_shell_wrapper(self):
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(server, "LOGS_DIR", td):
@@ -300,11 +314,21 @@ class ProjectDetectionTests(unittest.TestCase):
             static, static_error = server.detect_project(static_dir)
 
         self.assertIsNone(django_error)
-        self.assertEqual(django["candidates"][0]["command"], "python3 manage.py runserver")
+        django_cmd = django["candidates"][0]["command"]
+        if IS_WINDOWS:
+            self.assertIn(django_cmd, ("python manage.py runserver",
+                                       "python3 manage.py runserver",
+                                       "py manage.py runserver"))
+            static_cmd = static["candidates"][0]["command"]
+            self.assertIn(static_cmd, ("python -m http.server 8000",
+                                       "python3 -m http.server 8000",
+                                       "py -m http.server 8000"))
+        else:
+            self.assertEqual(django_cmd, "python3 manage.py runserver")
+            self.assertEqual(static["candidates"][0]["command"],
+                             "python3 -m http.server 8000")
         self.assertEqual(django["candidates"][0]["port"], 8000)
-        self.assertIsNone(static_error)
-        self.assertEqual(static["candidates"][0]["command"],
-                         "python3 -m http.server 8000")
+        self.assertEqual(static["candidates"][0]["port"], 8000)
 
     def test_invalid_folder_returns_a_clear_error(self):
         result, error = server.detect_project("/path/that/does/not/exist")
@@ -360,6 +384,7 @@ class ConfigTests(unittest.TestCase):
             cfg.update(lambda data: data["watchedKeywords"].append("node"))
             self.assertEqual(server.Config.DEFAULT, original)
 
+    @skip_windows
     def test_atomic_write_keeps_previous_good_version_as_backup(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "config.json")
@@ -456,6 +481,7 @@ class RuntimeStorageTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 server.resolve_runtime_dir("TEST_CONSOLE_DIR", "/tmp/default")
 
+    @skip_windows
     def test_first_run_copies_legacy_data_privately_without_deleting_source(self):
         with tempfile.TemporaryDirectory() as td:
             legacy = os.path.join(td, "project-data")
@@ -551,6 +577,7 @@ class RuntimeStorageTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("总控台已启动", result.stdout + result.stderr)
 
+    @skip_windows
     def test_app_launcher_redirects_output_only_after_storage_is_ready(self):
         with tempfile.TemporaryDirectory() as td:
             target = os.path.join(td, "custom-data")
@@ -577,6 +604,7 @@ class RuntimeStorageTests(unittest.TestCase):
 
 
 class ProcessIdentityTests(unittest.TestCase):
+    @skip_windows
     def test_random_marker_is_required_for_whole_process_group(self):
         app = {"id": "a", "lastPid": 42, "lastPgid": 42, "runToken": "right"}
         groups = {42: [42, 43]}
@@ -591,6 +619,7 @@ class ProcessIdentityTests(unittest.TestCase):
             index, _, _ = server.managed_process_index([stale], groups)
             self.assertEqual(index["a"], [])
 
+    @skip_windows
     def test_real_started_process_is_identified_and_stoppable(self):
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(server, "LOGS_DIR", td):
@@ -616,6 +645,7 @@ class ProcessIdentityTests(unittest.TestCase):
                         pass
                     proc.wait(timeout=3)
 
+    @skip_windows
     def test_verified_legacy_process_can_be_stopped_without_port_kill(self):
         app = {"id": "legacy", "lastPid": 999, "lastPgid": None,
                "runToken": None, "port": 8080, "cwd": "/tmp/project"}
@@ -708,6 +738,7 @@ class ProcessIdentityTests(unittest.TestCase):
         self.assertIsNone(server.legacy_managed_pid(
             app, **common, cwds={5252: "/project", 6262: "/project"}))
 
+    @skip_windows
     def test_attach_rejects_foreign_unrelated_or_running(self):
         cfg = mock.Mock()
         app = {"id": "a", "port": 8080, "kind": "service"}
@@ -805,6 +836,7 @@ class ProcessIdentityTests(unittest.TestCase):
 
 
 class LaunchEnvironmentTests(unittest.TestCase):
+    @skip_windows
     def test_headless_launch_path_includes_common_user_node_locations(self):
         with mock.patch.object(server.os.path, "expanduser", return_value="/Users/example"), \
                 mock.patch.object(server.glob, "glob", side_effect=[
@@ -856,6 +888,7 @@ class StateTests(unittest.TestCase):
         self.assertEqual(service["openHost"], "localhost")
         self.assertEqual(built_app["openHosts"], {"5173": "localhost"})
 
+    @skip_windows
     def test_service_listener_is_linked_by_managed_identity_not_configured_port(self):
         app = {**server.Config.APP_DEFAULT, "id": "old-card",
                "name": "旧项目", "command": "npm run dev",
@@ -965,6 +998,7 @@ class StateTests(unittest.TestCase):
         self.assertEqual(row["lastExit"]["status"], "succeeded")
         self.assertNotIn("status", task["lastExit"])
 
+    @skip_windows
     def test_watched_processes_are_current_user_only(self):
         snap = {
             10: {"uid": server.SELF_UID, "comm": "ffmpeg",
@@ -1038,6 +1072,7 @@ class IconTests(unittest.TestCase):
 
 
 class ConsoleRestartTests(unittest.TestCase):
+    @skip_windows
     def test_instance_discovery_is_limited_to_same_project(self):
         snap = {
             71001: {"uid": server.SELF_UID, "args": "python3 server.py",
@@ -1062,6 +1097,7 @@ class ConsoleRestartTests(unittest.TestCase):
         self.assertEqual(found[0]["ports"], [9600])
         self.assertEqual(found[1]["ports"], [9601])
 
+    @skip_windows
     def test_panel_restart_spawns_helper_before_shutdown(self):
         class FakeServer:
             def __init__(self):

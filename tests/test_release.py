@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import stat
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -8,6 +9,10 @@ import zipfile
 
 from tools import build_release as release
 from tools import check_project as project_check
+
+IS_WINDOWS = sys.platform == "win32"
+skip_windows = unittest.skipIf(
+    IS_WINDOWS, "macOS-only (symlink / Unix permission bits)")
 
 
 class ReleaseFixtureTests(unittest.TestCase):
@@ -56,6 +61,7 @@ class ReleaseFixtureTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "敏感文件"):
                 release.iter_release_files()
 
+    @skip_windows
     def test_symlinked_required_source_is_rejected(self):
         target = self.write("target/server.py")
         (self.root / "server.py").symlink_to(target)
@@ -93,6 +99,7 @@ class ReleaseFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "令牌"):
             self.entries(source)
 
+    @skip_windows
     def test_archive_is_reproducible_and_metadata_is_normalized(self):
         regular = self.write("server.py", b"print('ok')\n")
         executable = self.write("start.command", b"#!/bin/bash\nexit 0\n")

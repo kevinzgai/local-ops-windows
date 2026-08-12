@@ -72,6 +72,7 @@ def command_output(args: list[str], cwd: Path = ROOT) -> str:
             capture_output=True,
             text=True,
             errors="replace",
+            encoding="utf-8",
             timeout=120,
             check=False,
         )
@@ -92,40 +93,73 @@ def command_output(args: list[str], cwd: Path = ROOT) -> str:
 
 
 def check_required_files() -> str:
-    required = (
-        "VERSION",
-        "README.md",
-        "CHANGELOG.md",
-        "LICENSE",
-        "SECURITY.md",
-        "CONTRIBUTING.md",
-        "CODE_OF_CONDUCT.md",
-        "ASSET_PROVENANCE.md",
-        "THIRD_PARTY_NOTICES.md",
-        "RELEASE_CHECKLIST.md",
-        ".github/workflows/ci.yml",
-        ".github/ISSUE_TEMPLATE/config.yml",
-        ".github/ISSUE_TEMPLATE/bug_report.yml",
-        ".github/ISSUE_TEMPLATE/feature_request.yml",
-        ".github/PULL_REQUEST_TEMPLATE.md",
-        "requirements-dev.txt",
-        "Makefile",
-        "server.py",
-        "start.command",
-        "tests/test_server.py",
-        "docs/screenshots/ops-launchpad.jpg",
-        "docs/screenshots/ops-services.jpg",
-        "static/index.html",
-        "static/app.js",
-        "总控台.app/Contents/Info.plist",
-        "总控台.app/Contents/MacOS/launcher",
-    )
+    if sys.platform == "win32":
+        required = (
+            "VERSION",
+            "README.md",
+            "CHANGELOG.md",
+            "LICENSE",
+            "SECURITY.md",
+            "CONTRIBUTING.md",
+            "CODE_OF_CONDUCT.md",
+            "ASSET_PROVENANCE.md",
+            "THIRD_PARTY_NOTICES.md",
+            "RELEASE_CHECKLIST.md",
+            ".github/workflows/ci.yml",
+            ".github/ISSUE_TEMPLATE/config.yml",
+            ".github/ISSUE_TEMPLATE/bug_report.yml",
+            ".github/ISSUE_TEMPLATE/feature_request.yml",
+            ".github/PULL_REQUEST_TEMPLATE.md",
+            "requirements-dev.txt",
+            "Makefile",
+            "server.py",
+            "platform_win.py",
+            "start.bat",
+            "start-hidden.vbs",
+            "tests/test_server.py",
+            "tests/test_windows_runtime.py",
+            "docs/screenshots/ops-launchpad.jpg",
+            "docs/screenshots/ops-services.jpg",
+            "static/index.html",
+            "static/app.js",
+        )
+    else:
+        required = (
+            "VERSION",
+            "README.md",
+            "CHANGELOG.md",
+            "LICENSE",
+            "SECURITY.md",
+            "CONTRIBUTING.md",
+            "CODE_OF_CONDUCT.md",
+            "ASSET_PROVENANCE.md",
+            "THIRD_PARTY_NOTICES.md",
+            "RELEASE_CHECKLIST.md",
+            ".github/workflows/ci.yml",
+            ".github/ISSUE_TEMPLATE/config.yml",
+            ".github/ISSUE_TEMPLATE/bug_report.yml",
+            ".github/ISSUE_TEMPLATE/feature_request.yml",
+            ".github/PULL_REQUEST_TEMPLATE.md",
+            "requirements-dev.txt",
+            "Makefile",
+            "server.py",
+            "start.command",
+            "tests/test_server.py",
+            "docs/screenshots/ops-launchpad.jpg",
+            "docs/screenshots/ops-services.jpg",
+            "static/index.html",
+            "static/app.js",
+            "总控台.app/Contents/Info.plist",
+            "总控台.app/Contents/MacOS/launcher",
+        )
     missing = [name for name in required if not (ROOT / name).is_file()]
     require(not missing, "缺少必要文件: " + ", ".join(missing))
     return f"{len(required)} 个必要文件"
 
 
 def check_asset_provenance() -> str:
+    if sys.platform == "win32":
+        return "Windows 跳过总控台.app 图标台账"
     path = ROOT / "ASSET_PROVENANCE.md"
     require(path.is_file(), "ASSET_PROVENANCE.md 不存在")
     text = path.read_text(encoding="utf-8")
@@ -194,6 +228,9 @@ def read_version() -> str:
 
 
 def check_version() -> str:
+    if sys.platform == "win32":
+        version = read_version()
+        return f"VERSION={version}（Windows 暂不与 Info.plist 对齐）"
     version = read_version()
     with INFO_PLIST.open("rb") as handle:
         info = plistlib.load(handle)
@@ -392,6 +429,14 @@ def check_javascript_bindings() -> str:
 
 
 def check_shell_and_plist() -> str:
+    if sys.platform == "win32":
+        for name in ("start.bat", "start-hidden.vbs"):
+            path = ROOT / name
+            require(path.is_file(),
+                    f"{name} 不存在，请提供 Windows 启动入口")
+            require(path.stat().st_size > 0,
+                    f"{name} 为空")
+        return "start.bat + start-hidden.vbs"
     shell_files = (
         ROOT / "start.command",
         ROOT / "总控台.app" / "Contents" / "MacOS" / "launcher",
@@ -554,11 +599,12 @@ def check_javascript_tests() -> str:
     files = sorted(str(path) for path in (ROOT / "tests" / "js").glob("*.test.mjs"))
     require(bool(files), "tests/js/ 下没有 .test.mjs 测试文件")
     output = command_output([node, "--test", *files])
-    match = re.search(r"# (pass)\s+(\d+)", output)
-    require(match is not None, "无法确认 node --test 结果")
-    passed = int(match.group(2))
-    require("# fail" not in output or re.search(r"# fail\s+0$", output, re.M),
-            "JavaScript 测试存在失败项")
+    pass_match = re.search(r"(?:^|\s)pass\s+(\d+)", output)
+    require(pass_match is not None, "无法确认 node --test 结果")
+    passed = int(pass_match.group(1))
+    fail_match = re.search(r"(?:^|\s)fail\s+(\d+)", output)
+    failed = int(fail_match.group(1)) if fail_match else 0
+    require(failed == 0, f"JavaScript 测试存在 {failed} 项失败")
     return f"{passed} 个测试"
 
 

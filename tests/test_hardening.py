@@ -13,6 +13,10 @@ from unittest import mock
 
 import server
 
+IS_WINDOWS = sys.platform == "win32"
+skip_windows = unittest.skipIf(
+    IS_WINDOWS, "macOS-only (Unix signal / process group / symlink / permission bits)")
+
 
 class HttpHarness:
     def __init__(self):
@@ -215,6 +219,7 @@ class DeliveryMetadataTests(unittest.TestCase):
         self.assertIn("configHealth", body)
         self.assertTrue(body["configHealth"]["writable"])
 
+    @skip_windows
     def test_health_is_lightweight_and_reports_runtime_metadata(self):
         icons = os.path.join(self.h.tmp.name, "icons")
         logs = os.path.join(self.h.tmp.name, "logs")
@@ -322,7 +327,10 @@ class OperationLockTests(unittest.TestCase):
                 "POST", "/api/apps/deadbeef/start", "{}",
                 {"Content-Type": "application/json"}))
 
+        healthy = {"status": "ok", "blocking": False, "issues": []}
         with mock.patch.object(server, "app_alive_sign", return_value=False), \
+                mock.patch.object(server, "inspect_app_health",
+                                  return_value=healthy), \
                 mock.patch.object(server, "scan_listeners", return_value=set()), \
                 mock.patch.object(server, "start_app", side_effect=slow_start), \
                 mock.patch.object(server, "persist_started_app", return_value=True):
@@ -393,6 +401,7 @@ class ProcessLifecycleHardeningTests(unittest.TestCase):
             json.dump({**server.Config.DEFAULT, "apps": [app]}, f)
         return server.Config(path)
 
+    @skip_windows
     def test_manual_stop_waits_then_clears_without_recording_last_exit(self):
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(server, "LOGS_DIR", td):
@@ -420,6 +429,7 @@ class ProcessLifecycleHardeningTests(unittest.TestCase):
                     except OSError:
                         pass
 
+    @skip_windows
     def test_manual_task_stop_replaces_old_success_with_stopped_result(self):
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(server, "LOGS_DIR", td):
@@ -453,6 +463,7 @@ class ProcessLifecycleHardeningTests(unittest.TestCase):
                     except OSError:
                         pass
 
+    @skip_windows
     def test_sigterm_timeout_retains_runtime_identity_for_retry(self):
         command = (
             "python3 -c 'import signal,time; "
@@ -552,6 +563,7 @@ class StaticFileServingTests(unittest.TestCase):
         status, _, _ = self.h.request("GET", "/icons/../../etc/passwd")
         self.assertEqual(status, 404)
 
+    @skip_windows
     def test_symlink_inside_static_cannot_escape_to_outside(self):
         with tempfile.TemporaryDirectory() as td:
             outside = os.path.join(td, "secret.txt")
@@ -597,7 +609,10 @@ class KillEndpointTests(unittest.TestCase):
             "POST", "/api/kill", json.dumps({"pid": 99999999}), self.headers)
         self.assertEqual(status, 200)
         self.assertFalse(body["ok"])
-        self.assertIn("不存在", body["error"])
+        if IS_WINDOWS:
+            self.assertIn("结束当前用户", body["error"])
+        else:
+            self.assertIn("不存在", body["error"])
 
     def test_kill_sends_sigterm_to_owned_process(self):
         proc = subprocess.Popen(

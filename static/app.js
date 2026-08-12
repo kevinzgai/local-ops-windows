@@ -358,7 +358,7 @@ stopConsoleBtn.addEventListener('click', () => {
 });
 
 /* ============================================================
-   命令面板（⌘K）
+   命令面板（⌘K / Ctrl+K）
    ============================================================ */
 const paletteMask = $('#paletteMask'), paletteInput = $('#paletteInput');
 const paletteList = $('#paletteList');
@@ -435,7 +435,7 @@ function paletteActions() {
   items.push({
     icon: 'file-text',
     title: '打开日志中心',
-    hint: '日志 · ⌘J',
+    hint: '日志 · ⌘J / Ctrl+J',
     run: openLogsCenter,
   });
   items.push({

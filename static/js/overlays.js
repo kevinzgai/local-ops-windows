@@ -43,7 +43,7 @@ function shellQuotePath(path) {
 function fallbackScriptCommand(path) {
   const quoted = shellQuotePath(path);
   const suffix = (String(path).match(/(\.[^./]+)$/) || [])[1]?.toLowerCase();
-  if (suffix === '.py') return 'python3 -- ' + quoted;
+  if (suffix === '.py') return 'python -- ' + quoted;
   if (suffix === '.zsh') return '/bin/zsh -- ' + quoted;
   return '/bin/bash -- ' + quoted;
 }
@@ -583,7 +583,7 @@ export function initAppModal({ onAddService, onAddTask }) {
     }
   });
 
-  /* 浏览工作目录（macOS 原生选择框） */
+  /* 浏览工作目录（系统原生选择框） */
   btnPickCwd.addEventListener('click', async () => {
     btnPickCwd.disabled = true;
     try {

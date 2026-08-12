@@ -314,7 +314,7 @@ function renderTips(data) {
   } else if (data.degraded) {
     text = '当前处于降级模式，部分组件数据可能不完整；可尝试重启总控台恢复。';
   } else {
-    text = '所有服务运行正常。小技巧：按 ⌘K 打开命令面板，可以快速启动、停止任意应用。';
+    text = '所有服务运行正常。小技巧：按 ⌘K / Ctrl+K 打开命令面板，可以快速启动、停止任意应用。';
   }
   setText(tipsText, text);
   tipsAction.hidden = !actionable;
@@ -335,7 +335,7 @@ export function renderWidgets(data) {
 }
 
 /* ============================================================
-   日志中心（聚合弹层，⌘J）：所有应用与总控台日志的目录页
+   日志中心（聚合弹层，⌘J / Ctrl+J）：所有应用与总控台日志的目录页
    ============================================================ */
 const logsMask = $('#logsMask'), logsList = $('#logsList');
 

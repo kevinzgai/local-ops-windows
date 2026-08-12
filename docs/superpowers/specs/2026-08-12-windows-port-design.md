@@ -100,8 +100,10 @@ API 契约与核心能力：启动台、服务监控、日志中心、命令面�
   - 首选：ctypes 调用 `CreateJobObject` / `AssignProcessToJobObject`，将启动的子进程
     放入 Job Object，停止时 `TerminateJobObject`，保证整棵进程树被杀（等价 killpg）。
   - 回退：`taskkill /T /F /PID <锚点>`（树内杀）。
-  - 接口语义不变：`SIGTERM` 类先尝试温和停止（`taskkill` 无温和树式杀，Job 版先发
-    `CTRL_BREAK_EVENT` 再超时后 Terminate）；对外只暴露 `ok/error`，不暴露信号细节。
+  - 温和停止（SIGTERM 等价）在 Windows 不可靠：隐藏且无共享控制台的进程组收不到
+    `CTRL_BREAK_EVENT`。因此停止策略以「直接终止整个 Job/树」为主，仅在显式 `force:
+    false` 且进程有可见控制台时才尝试 `CTRL_BREAK_EVENT` 加短暂宽限；对外只暴露
+    `ok/error`，不暴露信号细节。
 - 任务退出码约定（0 成功 / 130 取消 / 其他失败）保留不变；退出监视线程逻辑同 mac。
 
 ### PATH 注入

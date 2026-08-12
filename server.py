@@ -1574,44 +1574,59 @@ def stop_app_for_update(cfg, app, timeout=5.0):
 
 
 def pick_path(what):
-    """macOS 原生文件/目录选择框（osascript）。返回 (path|None, canceled)。"""
+    """Windows 原生目录/文件选择框（PowerShell WinForms）。返回 (path|None, canceled)。"""
     if what == "dir":
-        script = 'POSIX path of (choose folder with prompt "选择工作目录")'
+        body = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+            "$f.Description = '选择工作目录'; "
+            "if ($f.ShowDialog() -ne 'OK') { exit 1 }; "
+            "Write-Output $f.SelectedPath"
+        )
     else:
-        script = 'POSIX path of (choose file with prompt "选择批处理脚本")'
+        body = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$f = New-Object System.Windows.Forms.OpenFileDialog; "
+            "$f.Filter = '脚本 (所有文件)|*.*'; "
+            "if ($f.ShowDialog() -ne 'OK') { exit 1 }; "
+            "Write-Output $f.FileName"
+        )
     try:
-        r = subprocess.run(["osascript", "-e", script],
-                           capture_output=True, text=True, timeout=180)
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
+             "-Command", body],
+            capture_output=True, text=True, errors="replace", timeout=180)
     except Exception:
         return None, False
-    if r.returncode != 0:  # 用户按了取消（"User canceled."）
-        return None, True
-    return r.stdout.strip().rstrip("/") or None, False
+    if r.returncode != 0:
+        return None, True   # 用户取消
+    out = (r.stdout or "").strip().strip('\x00')
+    return out or None, False
 
 
 def command_for_script(path):
-    """按脚本类型生成可直接保存的 shell 命令，并安全引用任意文件名。"""
     normalized = os.path.abspath(os.path.expanduser(str(path)))
-    quoted = shlex.quote(normalized)
+    quoted = platform.quote_cmd(normalized)
     suffix = os.path.splitext(normalized)[1].lower()
     if suffix == ".py":
-        return "python3 -- %s" % quoted
-    if suffix == ".zsh":
-        return "/bin/zsh -- %s" % quoted
+        return "python %s" % quoted
+    if suffix == ".ps1":
+        return "powershell -NoProfile -ExecutionPolicy Bypass -File %s" % quoted
+    if suffix in (".bat", ".cmd"):
+        return "call %s" % quoted
     if suffix in (".sh", ".bash"):
-        return "/bin/bash -- %s" % quoted
+        return "bash %s" % quoted   # 需 PATH 里有 bash（如 Git Bash），否则 health 会提示
     if os.access(normalized, os.X_OK):
         return quoted
-    # .command 常见于 Finder 双击脚本；没有执行位时仍可明确交给 bash。
-    return "/bin/bash -- %s" % quoted
+    return "bash %s" % quoted
 
 
-SCRIPT_SUFFIXES = {".py", ".sh", ".bash", ".zsh", ".command"}
+SCRIPT_SUFFIXES = {".py", ".ps1", ".bat", ".cmd", ".sh", ".bash"}
 SHELL_BUILTINS = {
-    ".", ":", "[", "alias", "break", "cd", "command", "continue", "echo",
-    "eval", "exec", "exit", "export", "false", "printf", "pwd", "read",
-    "return", "set", "shift", "source", "test", "true", "type", "ulimit",
-    "umask", "unalias", "unset", "wait",
+    "call", "cd", "chdir", "cls", "copy", "del", "dir", "echo", "endlocal",
+    "exit", "for", "goto", "if", "md", "mkdir", "move", "path", "pause",
+    "popd", "pushd", "rd", "rem", "ren", "rename", "rmdir", "set", "setlocal",
+    "shift", "start", "time", "title", "type", "ver", "verify", "vol",
 }
 
 
@@ -1660,14 +1675,14 @@ def _script_target(tokens, cwd):
     base = os.path.basename(executable)
     args = tokens[index + 1:]
 
-    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", base):
+    if re.fullmatch(r"(?:py|python)(?:\d+(?:\.\d+)*)?", base):
         if "-m" in args or "-c" in args:
             return None, False, False
         if args and args[0] == "--":
             args = args[1:]
         candidate = next((arg for arg in args if not arg.startswith("-")), None)
         if candidate and (os.path.splitext(candidate)[1].lower() in SCRIPT_SUFFIXES
-                          or "/" in candidate):
+                          or "/" in candidate or "\\" in candidate):
             return (_resolve_command_path(candidate, cwd), False,
                     not os.path.isabs(os.path.expanduser(candidate)))
         return None, False, False
@@ -1681,13 +1696,13 @@ def _script_target(tokens, cwd):
             args = args[1:]
         candidate = next((arg for arg in args if not arg.startswith("-")), None)
         if candidate and (os.path.splitext(candidate)[1].lower() in SCRIPT_SUFFIXES
-                          or "/" in candidate):
+                          or "/" in candidate or "\\" in candidate):
             return (_resolve_command_path(candidate, cwd), False,
                     not os.path.isabs(os.path.expanduser(candidate)))
         return None, False, False
 
     suffix = os.path.splitext(executable)[1].lower()
-    if suffix in SCRIPT_SUFFIXES or "/" in executable:
+    if suffix in SCRIPT_SUFFIXES or "/" in executable or "\\" in executable:
         return (_resolve_command_path(executable, cwd), True,
                 not os.path.isabs(os.path.expanduser(executable)))
     return None, False, False
@@ -1742,7 +1757,7 @@ def inspect_app_health(app):
                 "检查脚本权限，或重新选择一个可读取的脚本。",
                 "pick-script",
             )
-        elif direct and not os.access(script_path, os.X_OK):
+        elif direct and sys.platform != "win32" and not os.access(script_path, os.X_OK):
             add(
                 "script-not-executable", "脚本不可执行",
                 "直接运行的脚本没有执行权限：%s" % script_path,

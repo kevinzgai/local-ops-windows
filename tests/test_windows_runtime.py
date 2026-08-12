@@ -101,5 +101,24 @@ class ClassifyTests(unittest.TestCase):
                          {"label": "VS Code", "icon": "code"})
 
 
+@unittest.skipUnless(WIN, "仅 Windows")
+class PickAndCommandTests(unittest.TestCase):
+    def test_command_for_py(self):
+        self.assertEqual(server.command_for_script(r"C:\a\b.py").split()[0], "python")
+        self.assertIn("b.py", server.command_for_script(r"C:\a\b.py"))
+
+    def test_command_for_ps1(self):
+        self.assertEqual(server.command_for_script(r"C:\a\b.ps1").split()[0], "powershell")
+
+    def test_command_for_bat(self):
+        out = server.command_for_script(r"C:\a\b.bat")
+        self.assertTrue(out.startswith("call "))
+        self.assertIn("b.bat", out)
+
+    def test_quote_cmd_roundtrip(self):
+        import platform_win
+        self.assertEqual(platform_win.quote_cmd("a b c"), '"a b c"')
+
+
 if __name__ == "__main__":
     unittest.main()

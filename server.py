@@ -8,11 +8,11 @@ API 契约与实现要点见 AGENTS.md。
 """
 
 import glob
-import fcntl
 import functools
 import errno
 import json
 import logging
+import msvcrt
 import os
 import re
 import secrets
@@ -31,12 +31,19 @@ import webbrowser
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import platform_win as platform
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION_PATH = os.path.join(BASE_DIR, "VERSION")
 LEGACY_DATA_DIR = os.path.join(BASE_DIR, "data")
-DEFAULT_DATA_DIR = os.path.expanduser(
-    "~/Library/Application Support/总控台")
-DEFAULT_LOGS_DIR = os.path.expanduser("~/Library/Logs/总控台")
+if sys.platform == "win32":
+    _APPDATA = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+    _LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    DEFAULT_DATA_DIR = os.path.join(_APPDATA, "总控台")
+    DEFAULT_LOGS_DIR = os.path.join(_LOCALAPPDATA, "总控台", "logs")
+else:
+    DEFAULT_DATA_DIR = os.path.expanduser("~/Library/Application Support/总控台")
+    DEFAULT_LOGS_DIR = os.path.expanduser("~/Library/Logs/总控台")
 
 
 def resolve_runtime_dir(name, default):
@@ -106,7 +113,7 @@ RUN_TOKEN_ARG_PREFIX = "console-run:"
 TASK_CANCELED_EXIT_CODE = 130
 
 SELF_PID = os.getpid()
-SELF_UID = os.getuid()
+SELF_UID = platform.current_username() if sys.platform == "win32" else os.getuid()
 ICON_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".ico")
 LOG = logging.getLogger("console")
 LOG_LOCK = threading.RLock()
@@ -177,15 +184,7 @@ APP_ROUTE_RE = re.compile(
 # ---------------------------------------------------------------- 运行目录
 
 def _ensure_private_dir(path):
-    if os.path.islink(path):
-        raise OSError("私有运行目录不能是符号链接: %s" % path)
-    os.makedirs(path, mode=0o700, exist_ok=True)
-    if os.path.islink(path) or not os.path.isdir(path):
-        raise OSError("私有运行路径不是安全目录: %s" % path)
-    try:
-        os.chmod(path, 0o700)
-    except OSError:
-        LOG.warning("无法收紧目录权限: %s", path)
+    os.makedirs(path, exist_ok=True)
 
 
 def _copy_private_regular_file(source, target):
@@ -325,12 +324,8 @@ def prepare_runtime_storage():
 
 def write_private_bytes(path, payload):
     """以 0600 权限写入用户数据文件。"""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
+    with open(path, "wb") as f:
         f.write(payload)
-        f.flush()
-        os.fsync(f.fileno())
-    os.chmod(path, 0o600)
 
 
 # ---------------------------------------------------------------- 配置
@@ -536,44 +531,33 @@ class Config:
 
 
 def acquire_instance_lock(path=INSTANCE_LOCK_PATH):
-    """Acquire the per-project process lock and keep its file object alive.
-
-    Port fallback alone is not a single-instance guarantee: two servers on
-    :9600/:9601 would still update the same config.  flock ties exclusivity to
-    this data directory and is released automatically if the process crashes.
-    """
-    directory = os.path.dirname(path) or "."
-    os.makedirs(directory, mode=0o700, exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    lock_file = os.fdopen(fd, "r+", encoding="ascii")
+    """单实例锁：文件偏移 0 处锁定 1 字节（msvcrt，跨进程有效）。"""
     try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as e:
-        lock_file.close()
-        if e.errno in (errno.EACCES, errno.EAGAIN):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        lock_file = open(path, "a+b")
+        try:
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            lock_file.close()
             return None
-        raise
-    try:
-        os.fchmod(lock_file.fileno(), 0o600)
-        lock_file.seek(0)
-        lock_file.truncate()
-        lock_file.write("%d\n" % SELF_PID)
-        lock_file.flush()
-        os.fsync(lock_file.fileno())
+        return lock_file
     except OSError:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        lock_file.close()
-        raise
-    return lock_file
+        return None
 
 
 def release_instance_lock(lock_file):
-    if lock_file is None:
-        return
     try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-    finally:
-        lock_file.close()
+        if lock_file is not None:
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+    try:
+        if lock_file is not None:
+            lock_file.close()
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------- 子进程与解析
@@ -1512,7 +1496,6 @@ def start_app(app):
     try:
         log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND,
                          0o600)
-        os.fchmod(log_fd, 0o600)
         logf = os.fdopen(log_fd, "ab", buffering=0)
     except OSError as e:
         return False, "无法打开日志文件: %s" % e, None, None, None
@@ -4002,7 +3985,6 @@ def redirect_console_output():
     path = os.path.join(LOGS_DIR, "console.log")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
-        os.fchmod(fd, 0o600)
         for stream in (sys.stdout, sys.stderr):
             try:
                 stream.flush()

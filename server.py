@@ -3795,7 +3795,7 @@ def restart_helper(old_pid, preferred_port):
     return 0
 
 
-def _run_console(preferred_port=None, open_browser=True):
+def _run_console(preferred_port=None, open_browser=True, tray=False):
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -3817,18 +3817,31 @@ def _run_console(preferred_port=None, open_browser=True):
         except OSError:
             continue
     if server is None:
-        print("错误：端口 %d-%d 均被占用，无法启动。" %
-              (PORT_START, PORT_START + PORT_TRIES - 1))
+        message = "错误：端口 %d-%d 均被占用，无法启动。" % (
+            PORT_START, PORT_START + PORT_TRIES - 1)
+        print(message)
+        if tray:
+            platform.message_box("总控台", message)
         sys.exit(1)
 
     print("总控台已启动: http://%s:%d/  (Ctrl+C 停止)" % (HOST, port), flush=True)
     if open_browser:
         open_browser_later(port)
+
+    tray_icon = None
+    if tray:
+        tray_icon = platform.start_tray(HOST, port, {
+            "open_panel": lambda: open_browser_later(port),
+            "stop": server.shutdown,
+            "quit": lambda: os._exit(0),
+        })
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if tray_icon is not None:
+            tray_icon.stop()
         server.server_close()
         print("已停止", flush=True)
 
@@ -3926,7 +3939,7 @@ def main(preferred_port=None, open_browser=True, log_to_file=False, tray=False):
                 webbrowser.open("http://%s:%d/" % (HOST, min(ports)))
         return False
     try:
-        _run_console(preferred_port, open_browser)
+        _run_console(preferred_port, open_browser, tray)
         return True
     finally:
         release_instance_lock(instance_lock)

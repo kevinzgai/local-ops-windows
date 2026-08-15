@@ -1247,5 +1247,25 @@ class CliArgsTests(unittest.TestCase):
                           "tray": False})
 
 
+class TrayIntegrationTests(unittest.TestCase):
+    def test_run_console_starts_tray_with_port(self):
+        with mock.patch.object(server, "start_log_maintenance"), \
+             mock.patch.object(server, "_ensure_private_dir"), \
+             mock.patch.object(server, "open_browser_later"), \
+             mock.patch.object(server, "Config"), \
+             mock.patch.object(server, "platform") as platform, \
+             mock.patch.object(server, "ConsoleServer") as console_cls:
+            fake_server = console_cls.return_value
+            platform.start_tray.return_value = mock.Mock()
+            server._run_console(preferred_port=9600, open_browser=False,
+                                tray=True)
+            platform.start_tray.assert_called_once()
+            args, kwargs = platform.start_tray.call_args
+            self.assertEqual(args[0], server.HOST)
+            self.assertEqual(args[1], 9600)
+            fake_server.serve_forever.assert_called_once()
+            platform.start_tray.return_value.stop.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

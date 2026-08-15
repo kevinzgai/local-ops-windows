@@ -224,5 +224,12 @@ class AssetProvenanceGateTests(unittest.TestCase):
         self.assertIn("2 项素材", result)
 
 
+class BrandAssetsTests(unittest.TestCase):
+    def test_console_app_icon_ico_is_generated(self):
+        ico = os.path.join(os.path.dirname(__file__), "..",
+                           "static", "assets", "console-app-icon.ico")
+        self.assertTrue(os.path.isfile(ico))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -52,24 +53,34 @@ def main() -> None:
         format="ICO",
         sizes=[(16, 16), (32, 32), (48, 48)],
     )
+    ico_path = ASSETS / "console-app-icon.ico"
+    source.save(
+        ico_path,
+        format="ICO",
+        sizes=[(16, 16), (24, 24), (32, 32), (48, 48),
+               (64, 64), (128, 128), (256, 256)],
+    )
 
-    iconutil = shutil.which("iconutil")
-    if not iconutil:
-        raise SystemExit("找不到 macOS iconutil，无法生成 AppIcon.icns")
-    with tempfile.TemporaryDirectory(prefix="console-brand-") as tmp:
-        iconset = Path(tmp) / "AppIcon.iconset"
-        iconset.mkdir()
-        for size, name in ICONSET_SIZES:
-            resized(source, size).save(iconset / name, optimize=True)
-        subprocess.run(
-            [iconutil, "-c", "icns", str(iconset), "-o", str(ICNS)],
-            check=True,
-        )
+    if sys.platform == "darwin":
+        iconutil = shutil.which("iconutil")
+        if not iconutil:
+            raise SystemExit("找不到 macOS iconutil，无法生成 AppIcon.icns")
+        with tempfile.TemporaryDirectory(prefix="console-brand-") as tmp:
+            iconset = Path(tmp) / "AppIcon.iconset"
+            iconset.mkdir()
+            for size, name in ICONSET_SIZES:
+                resized(source, size).save(iconset / name, optimize=True)
+            subprocess.run(
+                [iconutil, "-c", "icns", str(iconset), "-o", str(ICNS)],
+                check=True,
+            )
 
     print(f"已生成 {ASSETS / 'favicon.ico'}")
+    print(f"已生成 {ASSETS / 'console-app-icon.ico'}")
     print(f"已生成 {ASSETS / 'favicon-32.png'}")
     print(f"已生成 {ASSETS / 'apple-touch-icon.png'}")
-    print(f"已生成 {ICNS}")
+    if sys.platform == "darwin":
+        print(f"已生成 {ICNS}")
 
 
 if __name__ == "__main__":

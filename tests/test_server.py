@@ -30,6 +30,7 @@ class ParsingTests(unittest.TestCase):
         self.assertIsNotNone(server.validate_port(True)[1])
         self.assertIsNotNone(server.validate_port(70000)[1])
 
+    @skip_windows
     def test_listener_scan_preserves_ipv6_loopback_for_open_links(self):
         output = """COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
 node 101 user 1u IPv6 0x0 0t0 TCP [::1]:5173 (LISTEN)

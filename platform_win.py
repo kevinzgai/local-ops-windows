@@ -15,6 +15,14 @@ from ctypes import wintypes
 
 import psutil
 
+try:
+    # psutil 7.x 的 Process.ppid() 每次调用都会重建整张 Toolhelp ppid 表，
+    # 逐进程访问会让 process_iter(attrs=["ppid"]) 冷启动慢到 2.5s 以上。
+    # 这里直接取一次 C 层的 ppid_map（全量快照，约几毫秒）供批量使用。
+    from psutil._pswindows import ppid_map as _ppid_map
+except Exception:  # pragma: no cover - 私有 API 跨版本变动时回退逐进程查询
+    _ppid_map = None
+
 
 def current_username():
     """当前登录用户（进程归属比较用）。"""
@@ -112,14 +120,29 @@ def process_uid(pid):
 def origin_snapshot():
     """→ {pid: (ppid, args_str)}，供来源溯源。"""
     table = {}
-    for proc in psutil.process_iter(attrs=["pid", "ppid", "cmdline", "name"]):
+    ppids = None
+    if _ppid_map is not None:
+        try:
+            ppids = _ppid_map()
+        except Exception:  # pragma: no cover
+            ppids = None
+    for proc in psutil.process_iter(attrs=["pid", "cmdline", "name"]):
         try:
             info = proc.info
         except (psutil.Error, AttributeError):
             continue
-        pid, ppid = info.get("pid"), info.get("ppid")
-        if pid is None or ppid is None:
+        pid = info.get("pid")
+        if pid is None:
             continue
+        if ppids is not None:
+            ppid = ppids.get(pid)
+            if ppid is None:
+                continue
+        else:
+            try:
+                ppid = proc.ppid()
+            except psutil.Error:
+                continue
         cl = info.get("cmdline")
         args = " ".join(cl) if isinstance(cl, list) else (info.get("name") or "")
         table[pid] = (ppid, args)

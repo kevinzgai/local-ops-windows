@@ -610,38 +610,12 @@ def _to_float(tok, default=0.0):
 
 
 def scan_listeners():
-    """lsof 监听快照 → {(pid, port): {bind_host, ...}}。
+    """监听快照 → {(pid, port): {bind_host, ...}}。
 
     字典仍可像旧集合一样迭代/判断 ``(pid, port)``，同时保留监听地址，
     供前端区分仅监听 ``::1`` 的服务（需通过 localhost 打开）。
     """
-    out = run_cmd(["lsof", "-iTCP", "-sTCP:LISTEN", "-P", "-n"])
-    found = {}
-    for line in out.splitlines():
-        if not line or line.startswith("COMMAND"):
-            continue
-        parts = line.split()
-        if len(parts) < 9:
-            continue
-        try:
-            pid = int(parts[1])
-        except ValueError:
-            continue
-        # NAME 列形如 *:8791 / 127.0.0.1:8080 / [::1]:8765，末尾可能跟 "(LISTEN)"
-        port = None
-        bind_host = None
-        for tok in reversed(parts):
-            m = re.search(r":(\d+)$", tok)
-            if m:
-                port = int(m.group(1))
-                bind_host = tok[:m.start()]
-                if bind_host.startswith("[") and bind_host.endswith("]"):
-                    bind_host = bind_host[1:-1]
-                break
-        if port is None:
-            continue
-        found.setdefault((pid, port), set()).add(bind_host or "")
-    return found
+    return platform.scan_listeners()
 
 
 def listener_open_host(listeners, port, pids=None):
@@ -675,90 +649,18 @@ def listener_open_host(listeners, port, pids=None):
 def ps_snapshot(pids=None, with_uid=True):
     """批量进程信息 → {pid: {"uid","comm","args","cpu","mem","etime"}}。
 
-    pids=None 表示全部进程（ps -ax）。解析：左边固定列 pid[/uid]/etime/cpu/mem，
-    其余部分（可含空格）即 comm；args 单独一次 ps 取。
-    注意：不能用 `comm=` 抑制表头——macOS ps 会把空表头列压到 16 字节截断
-    内容；保留表头后解析时跳过表头行即可（首列非数字的行）。
+    pids=None 表示全部进程。uid 在 Windows 上为用户名 str。
     """
-    base = ["ps"]
-    if pids is None:
-        base.append("-ax")
-    else:
-        pids = [int(p) for p in pids]
-        if not pids:
-            return {}
-        base += ["-p", ",".join(str(p) for p in pids)]
-    # comm 必须放在最后一列：macOS ps 只保证最后一列不被定宽截断
-    # （comm 在中间列时会被压成约 16 字节，长路径被砍断）。
-    fields = ["pid"] + (["uid"] if with_uid else []) + \
-             ["etime", "%cpu", "%mem", "comm"]
-    out1 = run_cmd(base + ["-o", ",".join(fields)])
-    out2 = run_cmd(base + ["-o", "pid,args"])
-
-    snap = {}
-    fixed = 5 if with_uid else 4  # pid [uid] etime cpu mem 之后的都是 comm
-    for line in out1.splitlines():
-        toks = line.split()
-        if len(toks) < fixed + 1:
-            continue
-        try:
-            pid = int(toks[0])
-        except ValueError:
-            continue  # 表头行
-        i = 1
-        entry = {"args": ""}
-        if with_uid:
-            try:
-                entry["uid"] = int(toks[1])
-            except ValueError:
-                entry["uid"] = -1
-            i = 2
-        entry["etime"] = parse_etime(toks[i])
-        entry["cpu"] = _to_float(toks[i + 1])
-        entry["mem"] = _to_float(toks[i + 2])
-        entry["comm"] = " ".join(toks[i + 3:])
-        snap[pid] = entry
-    for line in out2.splitlines():
-        toks = line.split(None, 1)
-        if not toks:
-            continue
-        try:
-            pid = int(toks[0])
-        except ValueError:
-            continue
-        if pid in snap:
-            snap[pid]["args"] = toks[1] if len(toks) > 1 else ""
-    return snap
+    return platform.ps_snapshot(pids, with_uid)
 
 
 def lsof_cwds(pids):
-    """lsof -a -p <pids> -d cwd -Fn → {pid: cwd}。"""
-    pids = [int(p) for p in pids]
-    if not pids:
-        return {}
-    out = run_cmd(["lsof", "-a", "-p", ",".join(str(p) for p in pids),
-                   "-d", "cwd", "-Fn"])
-    result = {}
-    cur = None
-    for line in out.splitlines():
-        if line.startswith("p"):
-            try:
-                cur = int(line[1:])
-            except ValueError:
-                cur = None
-        elif line.startswith("n") and cur is not None:
-            result[cur] = line[1:]
-    return result
+    """→ {pid: cwd}；受限进程静默跳过。"""
+    return platform.lsof_cwds(pids)
 
 
 def pid_alive(pid):
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except PermissionError:
-        return True
-    except (OSError, ValueError, TypeError):
-        return False
+    return platform.pid_alive(pid)
 
 
 # ---------------------------------------------------------------- 状态构建
@@ -794,8 +696,7 @@ def classify_group(key, name, comm, args, cwd, promoted):
         # C:\Windows\ is the canonical Windows system root; the bare C:\
         # would over-match user data, so the trailing slash is required.
         return "background"
-    if any("\\appdata\\local\\temps" in low_comm or
-           "\\windows\\" in low_comm):
+    if "\\appdata\\local\\temps" in low_comm or "\\windows\\" in low_comm:
         return "background"
     return "mine"
 
@@ -855,18 +756,8 @@ _ORIGIN_MULTIPLEXERS = {}
 
 
 def origin_snapshot():
-    """ps -axo pid=,ppid=,args → {pid: (ppid, args)}，供来源溯源。"""
-    table = {}
-    for line in run_cmd(["ps", "-axo", "pid=,ppid=,args"]).splitlines():
-        toks = line.split(None, 2)
-        if len(toks) < 2:
-            continue
-        try:
-            pid, ppid = int(toks[0]), int(toks[1])
-        except ValueError:
-            continue
-        table[pid] = (ppid, toks[2] if len(toks) > 2 else "")
-    return table
+    """→ {pid: (ppid, args)}，供来源溯源。"""
+    return platform.origin_snapshot()
 
 
 def attribute_origin(pid, table):
@@ -1366,15 +1257,8 @@ def list_themes():
 # ---------------------------------------------------------------- 进程/应用操作
 
 def process_uid(pid):
-    """返回进程 uid；进程不存在返回 None。"""
-    out = run_cmd(["ps", "-o", "uid=", "-p", str(int(pid))])
-    toks = out.split()
-    if not toks:
-        return None
-    try:
-        return int(toks[0])
-    except ValueError:
-        return None
+    """返回进程属主用户名；进程不存在返回 None。"""
+    return platform.process_uid(pid)
 
 
 def kill_process(pid, force):
@@ -1439,6 +1323,10 @@ def build_launch_env(token, environ=None):
     env["PATH"] = os.pathsep.join(
         path for path in preferred if path and not (path in seen or seen.add(path)))
     env[RUN_TOKEN_ENV] = token
+    # 输出重定向到日志文件（非 TTY），显式关闭颜色，避免子进程（vite/npm 等）
+    # 把 ANSI 颜色码写进日志；读取端 strip_ansi 仍兜底清理历史/顽固输出。
+    env["NO_COLOR"] = "1"
+    env.pop("FORCE_COLOR", None)
     return env
 
 
@@ -2300,8 +2188,18 @@ def _tail_file_lines(path, count, block_size=65536):
         return []
 
 
+# 覆盖 CSI（含 SGR 颜色）/ OSC / 单字符转义序列，与主流 strip-ansi 语义一致。
+ANSI_ESCAPE_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x1b]*?(?:\x1b\\|\x07)|[@-_])")
+
+
+def strip_ansi(text):
+    """去掉子进程日志里的终端颜色/控制序列（如 vite/npm 的 ANSI 颜色码）。"""
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
 def read_log_tail(app_id, count):
-    """从当前日志和轮转备份中高效读取最后 count 行。"""
+    """从当前日志和轮转备份中高效读取最后 count 行（已剥离 ANSI 控制序列）。"""
     path = os.path.join(LOGS_DIR, "%s.log" % app_id)
     rotate_log_file(path)
     collected = []
@@ -2313,7 +2211,7 @@ def read_log_tail(app_id, count):
                 break
             lines = _tail_file_lines(candidate, remaining)
             collected = lines + collected
-    return "\n".join(collected[-count:])
+    return strip_ansi("\n".join(collected[-count:]))
 
 
 def start_log_maintenance():
@@ -2659,7 +2557,8 @@ class ConsoleServer(ThreadingHTTPServer):
         """空闲连接超时 / 客户端中途断开属正常现象，不刷 traceback。"""
         exc_type, exc, _ = sys.exc_info()
         if exc_type and isinstance(exc, (TimeoutError, BrokenPipeError,
-                                         ConnectionResetError)):
+                                         ConnectionResetError,
+                                         ConnectionAbortedError)):
             return
         super().handle_error(request, client_address)
 
@@ -2714,6 +2613,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             pass
         sys.stderr.write("%s - %s\n" % (self.client_address[0], fmt % args))
+
+    def log_error(self, fmt, *args):
+        # 空闲 keep-alive 连接被 30s socket 超时回收是设计内行为，
+        # 浏览器页面加载完成后常成批出现，不刷日志（避免误判为故障）。
+        if fmt == "Request timed out: %r":
+            return
+        self.log_message(fmt, *args)
 
     def _parsed_request_host(self):
         """Return (hostname, port) only for the exact local console origin."""
@@ -2849,7 +2755,8 @@ class Handler(BaseHTTPRequestHandler):
         if body:
             try:
                 self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError,
+                    ConnectionAbortedError):
                 pass
 
     def send_json(self, obj, status=200):
@@ -2932,7 +2839,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.serve_icon(path)
                 return
             self.serve_static(path)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError,
+                ConnectionAbortedError):
             pass
         except Exception as e:
             self._handle_request_error("GET", e)
@@ -3076,7 +2984,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.handle_fetch_favicon(app_id)
                     return
             self.send_err(404, "接口不存在")
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError,
+                ConnectionAbortedError):
             pass
         except Exception as e:
             self._handle_request_error("POST", e)
@@ -3622,7 +3531,8 @@ class Handler(BaseHTTPRequestHandler):
                 updated = dict(updated)
                 updated["stoppedForUpdate"] = True
             self.send_json(updated)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError,
+                ConnectionAbortedError):
             pass
         except Exception as e:
             self._handle_request_error("PUT", e)
@@ -3649,7 +3559,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_icon_delete(app_id)
                 return
             self.send_err(404, "接口不存在")
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError,
+                ConnectionAbortedError):
             pass
         except Exception as e:
             self._handle_request_error("DELETE", e)
@@ -3922,32 +3833,83 @@ def _run_console(preferred_port=None, open_browser=True):
         print("已停止", flush=True)
 
 
-def redirect_console_output():
-    """在运行目录迁移完成后，将 .app 输出安全追加到 Library Logs。"""
-    path = os.path.join(LOGS_DIR, "console.log")
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    try:
-        for stream in (sys.stdout, sys.stderr):
+class _TeeStream:
+    """把写入转发到原流与日志文件；原流为 None（pythonw 无控制台）时只写文件。"""
+
+    __slots__ = ("_original", "_fd")
+
+    def __init__(self, original, fd):
+        self._original = original
+        self._fd = fd
+
+    def write(self, data):
+        if self._original is not None:
             try:
-                stream.flush()
-            except (AttributeError, OSError):
+                self._original.write(data)
+            except Exception:
                 pass
-        os.dup2(fd, 1)
-        os.dup2(fd, 2)
-    finally:
-        os.close(fd)
+        if not isinstance(data, bytes):
+            data = str(data).encode("utf-8")
+        try:
+            os.write(self._fd, data)
+        except OSError:
+            pass
+        return len(data)
+
+    def flush(self):
+        if self._original is not None:
+            try:
+                self._original.flush()
+            except Exception:
+                pass
+
+    def isatty(self):
+        try:
+            return bool(self._original is not None and self._original.isatty())
+        except Exception:
+            return False
+
+    def fileno(self):
+        try:
+            if self._original is not None:
+                return self._original.fileno()
+        except Exception:
+            pass
+        return self._fd
+
+    def reconfigure(self, *args, **kwargs):
+        if self._original is not None:
+            try:
+                return self._original.reconfigure(*args, **kwargs)
+            except Exception:
+                pass
+        return None
+
+
+def redirect_console_output():
+    """把 stdout/stderr 追加到 console.log（tee 保留终端输出）。
+
+    前台终端（start.bat / python server.py）同时输出到终端与日志文件；
+    后台启动（pythonw）下原流为 None，仅写文件。保证「总控台日志」面板始终有内容。
+    """
+    path = os.path.join(LOGS_DIR, "console.log")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    except OSError:
+        return
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(line_buffering=True)
+            stream.flush()
         except (AttributeError, OSError):
             pass
+    sys.stdout = _TeeStream(sys.stdout, fd)
+    sys.stderr = _TeeStream(sys.stderr, fd)
 
 
 def main(preferred_port=None, open_browser=True, log_to_file=False):
     """Run exactly one console for this project/data directory."""
     migration = prepare_runtime_storage()
-    if log_to_file:
-        redirect_console_output()
+    redirect_console_output()
     if migration["dataMigrated"]:
         print("已将项目内旧配置和图标复制到: %s" % DATA_DIR,
               flush=True)

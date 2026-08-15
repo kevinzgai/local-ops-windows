@@ -319,6 +319,8 @@ NIM_DELETE = 0x00000002
 NIF_MESSAGE = 0x00000001
 NIF_ICON = 0x00000002
 NIF_TIP = 0x00000004
+NIF_INFO = 0x00000010
+NIIF_INFO = 0x00000001
 MB_ICONERROR = 0x10
 MB_ICONINFORMATION = 0x40
 MB_OK = 0x00000000
@@ -562,9 +564,67 @@ class TrayIcon:
             if self._thread is not None:
                 self._thread.join(timeout=2.0)
 
+    def notify(self, title, text):
+        """托盘气泡通知（本地桌面，无需浏览器）；失败返回 False。"""
+        if not self._hwnd:
+            return False
+        nid = _NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
+        nid.hWnd = self._hwnd
+        nid.uID = 1
+        nid.uFlags = NIF_INFO
+        nid.szInfoTitle = (title or "")[:63]
+        nid.szInfo = (text or "")[:255]
+        nid.dwInfoFlags = NIIF_INFO
+        return bool(_shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(nid)))
+
 
 def start_tray(host, port, callbacks):
     """创建并启动托盘图标，返回 TrayIcon 实例（供停止时调用 stop）。"""
     icon = TrayIcon(host, port, callbacks)
     icon.start()
     return icon
+
+
+# ---------------------------------------------------------------- 开机自启
+
+_AUTOSTART_VALUE_NAME = "总控台"
+_AUTOSTART_RUN_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def autostart_target():
+    """开机自启应执行的目标：exe 打包运行时为 exe 自身，源码模式为 start-hidden.vbs。"""
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "start-hidden.vbs")
+
+
+def set_autostart(enabled):
+    """写入/删除当前用户的 HKCU Run 键（无需管理员）。返回是否成功。"""
+    try:
+        if enabled:
+            result = subprocess.run(
+                ["reg", "add", _AUTOSTART_RUN_KEY, "/v", _AUTOSTART_VALUE_NAME,
+                 "/t", "REG_SZ", "/d", autostart_target(), "/f"],
+                capture_output=True, text=True, timeout=10)
+        else:
+            result = subprocess.run(
+                ["reg", "delete", _AUTOSTART_RUN_KEY, "/v",
+                 _AUTOSTART_VALUE_NAME, "/f"],
+                capture_output=True, text=True, timeout=10)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def get_autostart():
+    """HKCU Run 键是否已存在总控台自启项。"""
+    try:
+        result = subprocess.run(
+            ["reg", "query", _AUTOSTART_RUN_KEY, "/v", _AUTOSTART_VALUE_NAME],
+            capture_output=True, text=True, timeout=10)
+        return result.returncode == 0
+    except Exception:
+        return False
+

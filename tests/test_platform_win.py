@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest import mock
 
@@ -220,6 +221,63 @@ class TrayIconTests(unittest.TestCase):
         self.assertIs(args[2], cb)
         self.assertIs(result, cls.return_value)
         cls.return_value.start.assert_called_once()
+
+
+class AutostartTests(unittest.TestCase):
+    def test_autostart_target_source_mode_points_to_vbs(self):
+        target = pw.autostart_target()
+        self.assertTrue(target.lower().endswith("start-hidden.vbs"))
+        self.assertTrue(os.path.isfile(target))
+
+    def test_set_autostart_on_runs_reg_add(self):
+        with mock.patch("platform_win.subprocess.run") as run:
+            run.return_value = mock.Mock(returncode=0)
+            self.assertTrue(pw.set_autostart(True))
+        args = run.call_args[0][0]
+        self.assertEqual(args[:2], ["reg", "add"])
+        self.assertIn("/v", args)
+        self.assertIn(pw._AUTOSTART_VALUE_NAME, args)
+        self.assertIn(pw.autostart_target(), args)
+
+    def test_set_autostart_off_runs_reg_delete(self):
+        with mock.patch("platform_win.subprocess.run") as run:
+            run.return_value = mock.Mock(returncode=0)
+            self.assertTrue(pw.set_autostart(False))
+        args = run.call_args[0][0]
+        self.assertEqual(args[:2], ["reg", "delete"])
+
+    def test_set_autostart_failure_returns_false(self):
+        with mock.patch("platform_win.subprocess.run") as run:
+            run.return_value = mock.Mock(returncode=1)
+            self.assertFalse(pw.set_autostart(True))
+        with mock.patch("platform_win.subprocess.run",
+                        side_effect=OSError("boom")):
+            self.assertFalse(pw.set_autostart(True))
+
+    def test_get_autostart_reads_reg_query(self):
+        with mock.patch("platform_win.subprocess.run") as run:
+            run.return_value = mock.Mock(returncode=0)
+            self.assertTrue(pw.get_autostart())
+            run.return_value = mock.Mock(returncode=1)
+            self.assertFalse(pw.get_autostart())
+
+
+class TrayNotifyTests(unittest.TestCase):
+    def test_notify_without_hwnd_returns_false(self):
+        icon = pw.TrayIcon("127.0.0.1", 9600)
+        self.assertFalse(icon.notify("标题", "内容"))
+
+    def test_notify_posts_nif_info_balloon(self):
+        icon = pw.TrayIcon("127.0.0.1", 9600)
+        icon._hwnd = 12345
+        with mock.patch("platform_win._shell32.Shell_NotifyIconW",
+                        return_value=1) as notify:
+            self.assertTrue(icon.notify("标题", "内容"))
+        nid = notify.call_args[0][1]._obj  # byref 包装的原始 _NOTIFYICONDATAW
+        self.assertEqual(nid.uFlags, pw.NIF_INFO)
+        self.assertEqual(nid.szInfoTitle, "标题")
+        self.assertEqual(nid.szInfo, "内容")
+        self.assertEqual(nid.dwInfoFlags, pw.NIIF_INFO)
 
 
 if __name__ == "__main__":

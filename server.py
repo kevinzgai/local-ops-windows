@@ -388,7 +388,8 @@ class Config:
 
     DEFAULT = {"schemaVersion": CURRENT_SCHEMA_VERSION,
                "apps": [], "hidden": [], "pinned": [], "promoted": [],
-               "watchedKeywords": [], "uiTheme": DEFAULT_UI_THEME}
+               "watchedKeywords": [], "uiTheme": DEFAULT_UI_THEME,
+               "taskNotifications": False}
     APP_DEFAULT = {"id": None, "name": "", "command": "", "cwd": None,
                    "port": None, "emoji": None, "glyph": None, "icon": None,
                    "favicon": None, "kind": "service", "lastPid": None,
@@ -1158,6 +1159,8 @@ def build_state(cfg, console_port, config_health=None):
         "degradedReasons": degraded_reasons,
         "configHealth": dict(config_health or {}),
         "uiTheme": cfg.get("uiTheme") or DEFAULT_UI_THEME,
+        "taskNotifications": bool(cfg.get("taskNotifications")),
+        "autostart": autostart_enabled(),
         "themes": list_themes(),
     }
 
@@ -1384,6 +1387,19 @@ def startup_failure_message(app_id, code):
     return "启动命令立即退出（exit %s），请查看日志" % code
 
 
+# --tray 模式下的托盘实例（任务完成气泡通知用；非托盘模式为 None）
+_TRAY_ICON = None
+# 开机自启状态缓存（首次读取后本地更新，避免每 2s 轮询都跑一次 reg query）
+_AUTOSTART_CACHE = None
+
+
+def autostart_enabled():
+    global _AUTOSTART_CACHE
+    if _AUTOSTART_CACHE is None:
+        _AUTOSTART_CACHE = bool(platform.get_autostart())
+    return _AUTOSTART_CACHE
+
+
 def watch_app_exit(cfg, app_id, proc, token, started_at=None):
     """后台线程等子进程退出：若期间未被手动 stop/重启（lastPid 仍指向它），
     记录 lastExit（退出码、结束时间和运行耗时）。保留 lastPid 作为进程组锚点——
@@ -1414,9 +1430,34 @@ def watch_app_exit(cfg, app_id, proc, token, started_at=None):
                 target["lastExit"] = last_exit
         cfg.update(op)
         rotate_log_file(os.path.join(LOGS_DIR, "%s.log" % app_id))
+        _tray_notify_task_exit(cfg, app_id, code, duration, manually_stopped)
     thread = threading.Thread(target=_wait, daemon=True)
     thread.start()
     return thread
+
+
+def _tray_notify_task_exit(cfg, app_id, code, duration, manually_stopped):
+    """任务自然结束后发托盘气泡通知（--tray 且配置开启时）。"""
+    icon = _TRAY_ICON
+    if icon is None or manually_stopped or not cfg.get("taskNotifications"):
+        return
+    target = find_app(cfg.snapshot(), app_id)
+    if not target or (target.get("kind") or "service") != "task":
+        return
+    name = target.get("name") or "批处理任务"
+    status = (target.get("lastExit") or {}).get("status")
+    suffix = ("，用时 %.1f 秒" % duration) if duration else ""
+    if status == "succeeded":
+        body = "运行成功" + suffix
+    elif status == "canceled":
+        body = "已取消" + suffix
+    else:
+        body = ("运行失败（exit %s）" % code) + suffix
+    try:
+        icon.notify(name + " · 任务完成", body)
+    except Exception:
+        # 通知是锦上添花；托盘线程状态异常时静默失败。
+        pass
 
 
 def persist_started_app(cfg, app_id, proc, pgid, token):
@@ -2957,6 +2998,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.discard_body()
                 self.handle_console_stop()
                 return
+            if path == "/api/console/autostart":
+                self.handle_console_autostart()
+                return
+            if path == "/api/console/notifications":
+                self.handle_console_notifications()
+                return
             if path == "/api/apps":
                 self.handle_app_create()
                 return
@@ -3050,6 +3097,29 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.server.cfg.update(lambda d: d.__setitem__("uiTheme", theme_id))
         self.send_json({"ok": True, "theme": theme_id})
+
+    def handle_console_autostart(self):
+        data, err = self.read_json_body()
+        if err:
+            self.send_err(400, err)
+            return
+        enabled = bool(data.get("enabled"))
+        if not platform.set_autostart(enabled):
+            self.send_err(500, "无法写入开机启动项（注册表访问失败）")
+            return
+        global _AUTOSTART_CACHE
+        _AUTOSTART_CACHE = enabled
+        self.send_json({"ok": True, "enabled": enabled})
+
+    def handle_console_notifications(self):
+        data, err = self.read_json_body()
+        if err:
+            self.send_err(400, err)
+            return
+        enabled = bool(data.get("enabled"))
+        self.server.cfg.update(
+            lambda d: d.__setitem__("taskNotifications", enabled))
+        self.send_json({"ok": True, "enabled": enabled})
 
     def handle_console_restart(self):
         reserved, current, helper_pid = self.server.reserve_console_action("restart")
@@ -3838,6 +3908,7 @@ def _run_console(preferred_port=None, open_browser=True, tray=False):
         open_browser_later(port)
 
     tray_icon = None
+    global _TRAY_ICON
     if tray:
         try:
             tray_icon = platform.start_tray(HOST, port, {
@@ -3845,6 +3916,7 @@ def _run_console(preferred_port=None, open_browser=True, tray=False):
                 "stop": server.shutdown,
                 "quit": lambda: os._exit(0),
             })
+            _TRAY_ICON = tray_icon
         except Exception:
             LOG.exception("托盘启动失败，继续运行（浏览器仍可用）。")
             tray_icon = None
@@ -3853,6 +3925,7 @@ def _run_console(preferred_port=None, open_browser=True, tray=False):
     except KeyboardInterrupt:
         pass
     finally:
+        _TRAY_ICON = None
         if tray_icon is not None:
             tray_icon.stop()
         server.server_close()

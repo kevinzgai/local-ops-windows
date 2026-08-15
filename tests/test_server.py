@@ -1305,5 +1305,83 @@ class BuildHealthWindowsTests(unittest.TestCase):
         self.assertFalse(health["degraded"])
 
 
+class TrayTaskNotifyTests(unittest.TestCase):
+    def setUp(self):
+        self._saved_icon = server._TRAY_ICON
+        server._TRAY_ICON = None
+
+    def tearDown(self):
+        server._TRAY_ICON = self._saved_icon
+
+    def _cfg(self, enabled=True, apps=None):
+        cfg = mock.Mock()
+        cfg.get.return_value = enabled
+        cfg.snapshot.return_value = {"apps": apps or []}
+        return cfg
+
+    def test_task_exit_notifies_when_enabled(self):
+        icon = mock.Mock()
+        server._TRAY_ICON = icon
+        cfg = self._cfg(apps=[
+            {**server.Config.APP_DEFAULT, "id": "t1", "name": "备份",
+             "kind": "task", "lastExit": {"status": "succeeded", "code": 0}},
+        ])
+        server._tray_notify_task_exit(cfg, "t1", 0, 1.5, False)
+        icon.notify.assert_called_once_with(
+            "备份 · 任务完成", "运行成功，用时 1.5 秒")
+
+    def test_failed_task_notify_reports_exit_code(self):
+        icon = mock.Mock()
+        server._TRAY_ICON = icon
+        cfg = self._cfg(apps=[
+            {**server.Config.APP_DEFAULT, "id": "t1", "name": "任务",
+             "kind": "task", "lastExit": {"status": "failed", "code": 2}},
+        ])
+        server._tray_notify_task_exit(cfg, "t1", 2, 0.0, False)
+        icon.notify.assert_called_once_with(
+            "任务 · 任务完成", "运行失败（exit 2）")
+
+    def test_no_notify_when_disabled_or_manually_stopped(self):
+        icon = mock.Mock()
+        server._TRAY_ICON = icon
+        cfg = self._cfg(enabled=False, apps=[
+            {**server.Config.APP_DEFAULT, "id": "t1", "kind": "task"},
+        ])
+        server._tray_notify_task_exit(cfg, "t1", 0, 1.0, False)
+        icon.notify.assert_not_called()
+        cfg.get.return_value = True
+        server._tray_notify_task_exit(cfg, "t1", 0, 1.0, True)
+        icon.notify.assert_not_called()
+
+    def test_no_notify_without_tray(self):
+        cfg = self._cfg(apps=[
+            {**server.Config.APP_DEFAULT, "id": "t1", "kind": "task"},
+        ])
+        server._tray_notify_task_exit(cfg, "t1", 0, 1.0, False)
+        # _TRAY_ICON 为 None：不应抛异常，也不应通知。
+        self.assertTrue(True)
+
+    def test_no_notify_for_services(self):
+        icon = mock.Mock()
+        server._TRAY_ICON = icon
+        cfg = self._cfg(apps=[
+            {**server.Config.APP_DEFAULT, "id": "s1", "name": "Web",
+             "kind": "service"},
+        ])
+        server._tray_notify_task_exit(cfg, "s1", 0, 1.0, False)
+        icon.notify.assert_not_called()
+
+
+class AutostartStateTests(unittest.TestCase):
+    def test_autostart_enabled_caches_registry_read(self):
+        with mock.patch.object(server.platform, "get_autostart",
+                               return_value=True) as ga, \
+                mock.patch.object(server, "_AUTOSTART_CACHE", None):
+            self.assertTrue(server.autostart_enabled())
+            ga.assert_called_once()
+            self.assertTrue(server.autostart_enabled())
+            ga.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

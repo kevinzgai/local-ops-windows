@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 macOS 专属的「总控台」移植为在 `C:\Users\Administrator\Desktop\local-ops-windows` 上可运行的 Windows 原生版本，保持与 mac 版相同的网页界面、API 契约与核心能力。
+**Goal:** 把 macOS 专属的「总控台」移植为在 `C:\Users\example\local-ops-windows` 上可运行的 Windows 原生版本，保持与 mac 版相同的网页界面、API 契约与核心能力。
 
 **Architecture:** 独立 Windows 变体（继承原仓库 git 历史）。`server.py` 的 HTTP/配置/前端逻辑基本不动，把系统交互（进程/端口/锁/对话框/启动器）改为 Windows 实现：进程数据面用唯一第三方依赖 `psutil`，受控进程用 `cmd.exe` 锚点 + Job Object + `taskkill` 进程树管理，文件锁用 `msvcrt`，原生对话框用 PowerShell。
 

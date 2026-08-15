@@ -13,7 +13,7 @@ API 契约与核心能力：启动台、服务监控、日志中心、命令面�
 
 - 允许使用唯一的第三方依赖 `psutil`；其余仍用 Python 3 标准库。
 - 功能范围：完整功能移植。
-- 代码组织：独立 Windows 变体（新目录 `C:\Users\Administrator\Desktop\local-ops-windows`，继承 git 历史）。
+- 代码组织：独立 Windows 变体（新目录 `C:\Users\example\local-ops-windows`，继承 git 历史）。
 - 环境：由本会话使用 winget 安装 Python 3.12 并 `pip install psutil`，用于本地运行与验证。
 
 ## 环境与启动入口

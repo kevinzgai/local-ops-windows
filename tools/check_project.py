@@ -650,6 +650,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    # Windows 控制台默认 GBK：失败信息含不可编码字符时不得崩溃，须展示真实原因。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     report = Report()
     checks = [
         ("必要文件", check_required_files),

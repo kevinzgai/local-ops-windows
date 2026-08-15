@@ -660,6 +660,23 @@ class ProcessIdentityTests(unittest.TestCase):
             self.assertTrue(stopped, error)
         stop.assert_called_once_with(999, signal.SIGTERM)
 
+    def test_attached_stop_target_uses_process_tree_not_pgid(self):
+        """Windows 上 os.getpgid 不存在：attached 服务停止必须走进程树。"""
+        app = {"id": "att", "attached": True, "cwd": r"C:\proj",
+               "port": 8080, "kind": "service"}
+        with mock.patch.object(server, "managed_pids", return_value=[]), \
+                mock.patch.object(server, "legacy_managed_pid",
+                                  return_value=4242), \
+                mock.patch.object(server, "_current_user_group_members",
+                                  return_value=[4242]), \
+                mock.patch.object(server, "lsof_cwds",
+                                  return_value={4242: r"C:\proj"}):
+            target, error = server.resolve_app_stop_target(
+                app, {(4242, 8080)})
+        self.assertIsNone(error)
+        self.assertEqual(target, {"kind": "group", "id": 4242,
+                                  "members": [4242]})
+
     def test_running_app_can_be_stopped_in_place_before_update(self):
         cfg = mock.Mock()
         app = {"id": "a", "runToken": "token"}

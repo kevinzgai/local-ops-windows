@@ -1963,29 +1963,26 @@ def resolve_app_stop_target(app, listeners=None):
     legacy_pid = legacy_managed_pid(app, listeners)
     if legacy_pid:
         if app.get("attached"):
+            # Windows 无 pgid 概念：以 legacy_pid 的进程树作为「组」，
+            # 校验同用户成员的真实 cwd 全部等于配置 cwd 后才按组停止。
+            members = _current_user_group_members(legacy_pid)
+            member_cwds = lsof_cwds(members)
+            expected_cwd = app.get("cwd")
             try:
-                pgid = os.getpgid(legacy_pid)
-            except (ProcessLookupError, PermissionError, OSError):
-                pgid = None
-            if isinstance(pgid, int) and pgid > 0 and pgid != os.getpgrp():
-                members = _current_user_group_members(pgid)
-                member_cwds = lsof_cwds(members)
-                expected_cwd = app.get("cwd")
-                try:
-                    safe_group = bool(members and expected_cwd) and all(
-                        member_cwds.get(pid)
-                        and os.path.realpath(member_cwds[pid])
-                        == os.path.realpath(expected_cwd)
-                        for pid in members
-                    )
-                except OSError:
-                    safe_group = False
-                if safe_group:
-                    return {
-                        "kind": "group",
-                        "id": pgid,
-                        "members": list(members),
-                    }, None
+                safe_group = bool(members and expected_cwd) and all(
+                    member_cwds.get(pid)
+                    and os.path.realpath(member_cwds[pid])
+                    == os.path.realpath(expected_cwd)
+                    for pid in members
+                )
+            except OSError:
+                safe_group = False
+            if safe_group:
+                return {
+                    "kind": "group",
+                    "id": legacy_pid,
+                    "members": list(members),
+                }, None
         return {"kind": "pid", "id": legacy_pid, "members": [legacy_pid]}, None
     return None, "无法确认受控进程，未执行停止"
 

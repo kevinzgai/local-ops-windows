@@ -108,6 +108,16 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(server.attribute_origin(99, table),
                          {"label": "Windows Terminal", "icon": "terminal"})
 
+    def test_origin_jetbrains_idea64_alias(self):
+        # 实际进程名是 idea64.exe（无空格）；别名表必须命中。
+        # 注意：attribute_origin 用 parent_args.split()[0] 取可执行路径，
+        # 含空格路径会截断，这里用无空格路径验证别名查找本身。
+        table = {1: (0, ""),
+                 77: (1, r"C:\Apps\JetBrains\bin\idea64.exe"),
+                 99: (77, "node server.js")}
+        self.assertEqual(server.attribute_origin(99, table),
+                         {"label": "IntelliJ IDEA", "icon": "code"})
+
 
 @unittest.skipUnless(WIN, "仅 Windows")
 class PickAndCommandTests(unittest.TestCase):

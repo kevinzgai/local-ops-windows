@@ -1230,5 +1230,22 @@ class ThemeTests(unittest.TestCase):
             self.assertIsInstance(snap["apps"], list)
 
 
+class CliArgsTests(unittest.TestCase):
+    def test_defaults(self):
+        self.assertEqual(server.parse_cli_args([]),
+                         {"preferred_port": None, "open_browser": True,
+                          "tray": False})
+
+    def test_no_browser_and_tray(self):
+        self.assertEqual(server.parse_cli_args(["--no-browser", "--tray"]),
+                         {"preferred_port": None, "open_browser": False,
+                          "tray": True})
+
+    def test_preferred_port(self):
+        self.assertEqual(server.parse_cli_args(["--preferred-port", "9603"]),
+                         {"preferred_port": 9603, "open_browser": True,
+                          "tray": False})
+
+
 if __name__ == "__main__":
     unittest.main()

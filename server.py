@@ -3906,7 +3906,7 @@ def redirect_console_output():
     sys.stderr = _TeeStream(sys.stderr, fd)
 
 
-def main(preferred_port=None, open_browser=True, log_to_file=False):
+def main(preferred_port=None, open_browser=True, log_to_file=False, tray=False):
     """Run exactly one console for this project/data directory."""
     migration = prepare_runtime_storage()
     redirect_console_output()
@@ -3932,6 +3932,22 @@ def main(preferred_port=None, open_browser=True, log_to_file=False):
         release_instance_lock(instance_lock)
 
 
+def parse_cli_args(argv):
+    """解析普通启动的 CLI 参数（--preferred-port / --no-browser / --tray）。"""
+    preferred = None
+    if "--preferred-port" in argv:
+        index = argv.index("--preferred-port")
+        try:
+            preferred = int(argv[index + 1])
+        except (ValueError, IndexError):
+            raise SystemExit(2)
+    return {
+        "preferred_port": preferred,
+        "open_browser": "--no-browser" not in argv,
+        "tray": "--tray" in argv,
+    }
+
+
 if __name__ == "__main__":
     if "--prepare-storage" in sys.argv:
         # 供安装/诊断流程预先验证迁移和目录权限，不启动 HTTP。
@@ -3947,11 +3963,7 @@ if __name__ == "__main__":
             sys.exit(2)
         sys.exit(restart_helper(old, preferred))
     else:
-        preferred = None
-        if "--preferred-port" in sys.argv:
-            index = sys.argv.index("--preferred-port")
-            try:
-                preferred = int(sys.argv[index + 1])
-            except (ValueError, IndexError):
-                sys.exit(2)
-        main(preferred_port=preferred, open_browser="--no-browser" not in sys.argv)
+        args = parse_cli_args(sys.argv)
+        main(preferred_port=args["preferred_port"],
+             open_browser=args["open_browser"],
+             tray=args["tray"])

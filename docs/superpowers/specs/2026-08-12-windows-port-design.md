@@ -89,13 +89,15 @@ API 契约与核心能力：启动台、服务监控、日志中心、命令面�
 
 - 启动：`subprocess.Popen(["cmd.exe", "/d", "/s", "/c", inner], cwd=..., creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT, startupinfo=隐藏窗口, env=build_launch_env(token))`。
   - `inner` 为原始用户命令，`cmd /c` 同步等待其退出，作为锚点进程（等价 mac 外层 bash）。
-  - token 以 `rem console-run:<token>` 注释形式出现在 `cmd` 命令行内，便于会话内溯源；
-    同时 token 写入 config（同 mac），并写入进程环境变量 `CONSOLE_RUN_TOKEN`。
+  - token 写入 config（同 mac），并写入进程环境变量 `CONSOLE_RUN_TOKEN`。
+    不在 cmd 命令行拼 `rem console-run:<token>`：cmd /c 的引号解析会吞掉 `&` 之后
+    的命令，导致退出码变 0、服务不启动；溯源改走 `ppid == SELF_PID` 判定。
 - 受控进程识别（running 判定）：
   - 主路径：config `lastPid` 指向锚点 cmd；存活判定 = 锚点存活 或 以锚点为根的后代树
     （`psutil.Process(lastPid).children(recursive=True)`）仍有存活。
   - 会话内额外维护 Job Object 句柄（见停止），重启总控台后句柄丢失时退回上面的树识别。
-  - token 溯源：会话内按「命令行含 `rem console-run:<token>`」兜底匹配。
+  - token 溯源：会话内按「命令行含 `rem console-run:<token>`」兜底匹配（Windows 上该
+    规则不命中，主要靠 `ppid == SELF_PID`）。
 - 停止：
   - 首选：ctypes 调用 `CreateJobObject` / `AssignProcessToJobObject`，将启动的子进程
     放入 Job Object，停止时 `TerminateJobObject`，保证整棵进程树被杀（等价 killpg）。

@@ -236,6 +236,11 @@ def spawn_command(command, cwd, token, env, log_fd, app_id):
     首尾引号，导致带内层引号的命令（如 `python -c "import sys"`）被破坏；
     `shell=True` 让 Popen 直接把 command 交给 cmd.exe，不再做 list2cmdline
     转义，cmd.exe 仍然作为锚点进程（Job Object / process_tree 仍基于此 pid）。
+
+    注：token 仅通过 env["CONSOLE_RUN_TOKEN"] 注入（见 server.build_launch_env）。
+    曾尝试在 command 前加 `rem console-run:<token> & ` 以便溯源，但 cmd /c 的
+    引号解析会吞掉 `&` 之后的命令（退出码变 0、服务直接不启动），故放弃，
+    溯源改用 `ppid == SELF_PID` 判定。
     """
     flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     proc = subprocess.Popen(

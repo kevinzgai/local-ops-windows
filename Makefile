@@ -17,10 +17,10 @@ release-check:
 	$(PYTHON) tools/check_project.py --release
 
 release:
-	$(PYTHON) tools/build_release.py --dist "$(DIST_DIR)"
+	$(PYTHON) tools/build_release.py --dist "$(DIST_DIR)" --exe
 
 release-verify:
-	$(PYTHON) tools/build_release.py --dist "$(DIST_DIR)" --verify-only
+	$(PYTHON) tools/build_release.py --dist "$(DIST_DIR)" --verify-only --exe
 
 dev-setup:
 	$(PYTHON) -m pip install -r requirements-dev.txt

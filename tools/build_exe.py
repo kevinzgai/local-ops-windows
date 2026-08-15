@@ -26,9 +26,8 @@ DATA_FILES = [
 ]
 
 
-def build(name="总控台"):
-    if not ICON.is_file():
-        raise SystemExit("缺少图标：%s（先运行 tools/gen_brand_assets.py）" % ICON)
+def build_args(name="总控台"):
+    """构造 PyInstaller 命令行（纯函数，便于单元测试）。"""
     args = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--clean",
@@ -40,11 +39,19 @@ def build(name="总控台"):
     for src, dst in DATA_FILES:
         args += ["--add-data", "%s%s%s" % (src, os.pathsep, dst)]
     args.append(str(ROOT / "server.py"))
-    subprocess.run(args, cwd=str(ROOT), check=True)
+    return args
+
+
+def build(name="总控台"):
+    if not ICON.is_file():
+        raise SystemExit("缺少图标：%s（先运行 tools/gen_brand_assets.py）" % ICON)
+    subprocess.run(build_args(name), cwd=str(ROOT), check=True)
     spec = ROOT / ("%s.spec" % name)
     if spec.is_file():
         spec.unlink()
-    print("已生成: %s" % (DIST / ("%s.exe" % name)))
+    exe = DIST / ("%s.exe" % name)
+    print("已生成: %s" % exe)
+    return exe
 
 
 if __name__ == "__main__":

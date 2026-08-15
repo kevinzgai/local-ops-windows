@@ -15,6 +15,7 @@ import io
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import tempfile
 import time
@@ -484,6 +485,50 @@ def verify_checksum(output: Path) -> str:
     return expected_hash
 
 
+def ensure_pyinstaller() -> None:
+    """确认 PyInstaller 可用（exe 构建前提）。"""
+    try:
+        import PyInstaller  # noqa: F401
+    except ImportError:
+        fail("缺少 PyInstaller：exe 构建需要，请先执行 python -m pip install -r requirements-build.txt")
+
+
+def build_windows_exe() -> Path:
+    """调用 tools.build_exe 构建 dist/总控台.exe，返回其路径。"""
+    from tools import build_exe
+
+    ensure_pyinstaller()
+    return build_exe.build()
+
+
+def exe_artifact_name(release_version: str) -> str:
+    """发布用 exe 文件名（带版本与目标平台）。"""
+    return f"console-{release_version}-win64.exe"
+
+
+def publish_windows_exe(output_dir: Path, release_version: str) -> Path:
+    """构建 exe 并连同 SHA-256 校验文件发布到输出目录。"""
+    built = build_windows_exe()
+    if not built.is_file():
+        fail(f"exe 构建未产出：{built}")
+    destination = output_dir / exe_artifact_name(release_version)
+    shutil.copy2(built, destination)
+    destination.chmod(0o644)
+    write_checksum(destination)
+    verify_checksum(destination)
+    print(f"已生成并校验 {destination}")
+    print(f"SHA-256 {sha256(destination)}")
+    return destination
+
+
+def verify_windows_exe(output_dir: Path, release_version: str) -> str:
+    """校验已发布的 exe 及其 SHA-256 校验文件。"""
+    destination = output_dir / exe_artifact_name(release_version)
+    if not destination.is_file():
+        fail(f"发行 exe 不存在：{destination}（请先以完整构建模式生成）")
+    return verify_checksum(destination)
+
+
 def validate_output_dir(output_dir: Path) -> Path:
     resolved = output_dir.expanduser().resolve()
     try:
@@ -501,6 +546,8 @@ def parse_args() -> argparse.Namespace:
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--check-only", action="store_true", help="只验证发行来源")
     modes.add_argument("--verify-only", action="store_true", help="只验证已有发行包及校验文件")
+    parser.add_argument("--exe", action="store_true",
+                        help="同时构建/校验 Windows 单文件 exe（需 PyInstaller）")
     return parser.parse_args()
 
 
@@ -511,6 +558,9 @@ def main() -> int:
     entries = validate_payload(files)
     if args.check_only:
         print(f"发行内容检查通过：{len(files)} 个文件，版本 {release_version}")
+        if args.exe:
+            ensure_pyinstaller()
+            print("exe 构建前提通过：PyInstaller 可用")
         return 0
 
     output_dir = validate_output_dir(args.dist)
@@ -520,6 +570,10 @@ def main() -> int:
         checksum = verify_checksum(output)
         print(f"发行包校验通过：{output}")
         print(f"SHA-256 {checksum}")
+        if args.exe:
+            exe_checksum = verify_windows_exe(output_dir, release_version)
+            print(f"发行 exe 校验通过：{output_dir / exe_artifact_name(release_version)}")
+            print(f"SHA-256 {exe_checksum}")
         return 0
 
     write_archive(output, entries, release_version)
@@ -528,6 +582,8 @@ def main() -> int:
     verify_checksum(output)
     print(f"已生成并校验 {output}")
     print(f"SHA-256 {checksum}")
+    if args.exe:
+        publish_windows_exe(output_dir, release_version)
     return 0
 
 

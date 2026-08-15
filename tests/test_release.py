@@ -231,5 +231,59 @@ class BrandAssetsTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(ico))
 
 
+class WindowsExeReleaseTests(unittest.TestCase):
+    def test_exe_artifact_name_includes_version_and_platform(self):
+        self.assertEqual(release.exe_artifact_name("1.2.3"),
+                         "console-1.2.3-win64.exe")
+
+    def test_publish_copies_built_exe_and_writes_checksum(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            built = root / "built" / "总控台.exe"
+            built.parent.mkdir()
+            built.write_bytes(b"MZ-fake-exe")
+            output = root / "dist"
+            output.mkdir()
+            with mock.patch.object(release, "build_windows_exe",
+                                   return_value=built):
+                destination = release.publish_windows_exe(output, "1.0.0")
+            self.assertEqual(destination.name, "console-1.0.0-win64.exe")
+            self.assertEqual(destination.read_bytes(), b"MZ-fake-exe")
+            self.assertEqual(release.verify_checksum(destination),
+                             release.sha256(destination))
+
+    def test_publish_fails_when_build_produces_no_exe(self):
+        with mock.patch.object(release, "build_windows_exe",
+                               return_value=Path("missing.exe")):
+            with tempfile.TemporaryDirectory() as td:
+                with self.assertRaisesRegex(SystemExit, "未产出"):
+                    release.publish_windows_exe(Path(td), "1.0.0")
+
+    def test_ensure_pyinstaller_fails_with_guidance(self):
+        with mock.patch.dict(sys.modules, {"PyInstaller": None}):
+            with self.assertRaisesRegex(SystemExit, "requirements-build"):
+                release.ensure_pyinstaller()
+
+    def test_verify_windows_exe_requires_published_artifact(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(SystemExit, "不存在"):
+                release.verify_windows_exe(Path(td), "1.0.0")
+
+
+class BuildExeArgsTests(unittest.TestCase):
+    def test_build_args_construct_onefile_windowed_command(self):
+        from tools import build_exe
+
+        args = build_exe.build_args("总控台")
+        self.assertIn("--onefile", args)
+        self.assertIn("--windowed", args)
+        self.assertIn("--name", args)
+        self.assertEqual(args[args.index("--name") + 1], "总控台")
+        self.assertIn("--hidden-import", args)
+        self.assertEqual(args[args.index("--hidden-import") + 1], "psutil")
+        self.assertTrue(any(arg.endswith("server.py") for arg in args))
+        self.assertTrue(any(arg == "--add-data" for arg in args))
+
+
 if __name__ == "__main__":
     unittest.main()

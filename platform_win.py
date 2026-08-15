@@ -7,6 +7,7 @@ psutil 是本移植唯一第三方依赖。
 """
 
 import ctypes
+import logging
 import os
 import subprocess
 import sys
@@ -15,6 +16,8 @@ import time
 from ctypes import wintypes
 
 import psutil
+
+LOG = logging.getLogger("console")
 
 try:
     # psutil 7.x 的 Process.ppid() 每次调用都会重建整张 Toolhelp ppid 表，
@@ -524,6 +527,7 @@ class TrayIcon:
             0, "ConsoleTrayWindow", "", 0, 0, 0, 0, 0, HWND_MESSAGE,
             None, hinstance, None)
         if not self._hwnd:
+            LOG.warning("托盘创建失败：CreateWindowExW 未返回窗口句柄，继续运行（浏览器仍可用）。")
             return
         nid = _NOTIFYICONDATAW()
         nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
@@ -534,6 +538,7 @@ class TrayIcon:
         nid.hIcon = wc.hIcon
         nid.szTip = "总控台"
         if not _shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
+            LOG.warning("托盘创建失败：Shell_NotifyIconW(NIM_ADD) 失败，继续运行（浏览器仍可用）。")
             return
         msg = _MSG()
         while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -549,6 +554,8 @@ class TrayIcon:
     def stop(self):
         if self._hwnd:
             _user32.PostMessageW(self._hwnd, WM_DESTROY, 0, 0)
+            if self._thread is not None:
+                self._thread.join(timeout=2.0)
 
 
 def start_tray(host, port, callbacks):

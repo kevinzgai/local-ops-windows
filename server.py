@@ -3765,7 +3765,7 @@ def schedule_console_restart(server, preferred_port):
         [sys.executable, os.path.abspath(__file__), "--restart-helper",
          str(SELF_PID), str(int(preferred_port))],
         cwd=BASE_DIR, close_fds=True,
-        creationflags=platform_win.CREATE_NO_WINDOW)
+        creationflags=platform.CREATE_NO_WINDOW)
 
     def _shutdown():
         time.sleep(0.25)
@@ -3830,11 +3830,15 @@ def _run_console(preferred_port=None, open_browser=True, tray=False):
 
     tray_icon = None
     if tray:
-        tray_icon = platform.start_tray(HOST, port, {
-            "open_panel": lambda: open_browser_later(port),
-            "stop": server.shutdown,
-            "quit": lambda: os._exit(0),
-        })
+        try:
+            tray_icon = platform.start_tray(HOST, port, {
+                "open_panel": lambda: open_browser_later(port),
+                "stop": server.shutdown,
+                "quit": lambda: os._exit(0),
+            })
+        except Exception:
+            LOG.exception("托盘启动失败，继续运行（浏览器仍可用）。")
+            tray_icon = None
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -31,3 +31,4 @@ release/
 *.zip
 *.tar.gz
 *.sha256
+*.spec

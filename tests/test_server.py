@@ -13,9 +13,11 @@ from unittest import mock
 import server
 
 try:
-    from _win import IS_WINDOWS, skip_windows
+    from _win import (IS_WINDOWS, skip_windows, other_uid,
+                      long_running_command)
 except ImportError:  # python -m unittest tests.test_server 运行方式
-    from tests._win import IS_WINDOWS, skip_windows
+    from tests._win import (IS_WINDOWS, skip_windows, other_uid,
+                            long_running_command)
 
 
 class ParsingTests(unittest.TestCase):
@@ -608,6 +610,9 @@ class RuntimeStorageTests(unittest.TestCase):
 class ProcessIdentityTests(unittest.TestCase):
     @skip_windows
     def test_random_marker_is_required_for_whole_process_group(self):
+        # macOS 语义：以 pgid 为组、组内成员 args 须含 run-token 标记。
+        # Windows 版 _managed_candidates 忽略 groups、走锚点进程树，
+        # token 校验在停止/API 层而非运行判定，故该用例保持跳过。
         app = {"id": "a", "lastPid": 42, "lastPgid": 42, "runToken": "right"}
         groups = {42: [42, 43]}
         snap = {
@@ -621,11 +626,11 @@ class ProcessIdentityTests(unittest.TestCase):
             index, _, _ = server.managed_process_index([stale], groups)
             self.assertEqual(index["a"], [])
 
-    @skip_windows
     def test_real_started_process_is_identified_and_stoppable(self):
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(server, "LOGS_DIR", td):
-            app = {"id": "deadbeef", "command": "sleep 20", "cwd": td}
+            app = {"id": "deadbeef", "command": long_running_command(),
+                   "cwd": td}
             ok, error, proc, pgid, token = server.start_app(app)
             self.assertTrue(ok, error)
             tracked = dict(app, lastPid=proc.pid, lastPgid=pgid, runToken=token)
@@ -641,10 +646,8 @@ class ProcessIdentityTests(unittest.TestCase):
                 proc.wait(timeout=3)
             finally:
                 if proc.poll() is None:
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except OSError:
-                        pass
+                    # Windows 无 killpg：用平台进程树终止兜底清理。
+                    server.platform.kill_tree(proc.pid)
                     proc.wait(timeout=3)
 
     @skip_windows
@@ -757,7 +760,6 @@ class ProcessIdentityTests(unittest.TestCase):
         self.assertIsNone(server.legacy_managed_pid(
             app, **common, cwds={5252: "/project", 6262: "/project"}))
 
-    @skip_windows
     def test_attach_rejects_foreign_unrelated_or_running(self):
         cfg = mock.Mock()
         app = {"id": "a", "port": 8080, "kind": "service"}
@@ -772,7 +774,7 @@ class ProcessIdentityTests(unittest.TestCase):
                 mock.patch.object(server, "scan_listeners",
                                   return_value={(4242, 8080)}), \
                 mock.patch.object(server, "ps_snapshot",
-                                  return_value={4242: {"uid": server.SELF_UID + 1}}):
+                                  return_value={4242: {"uid": other_uid(server.SELF_UID)}}):
             ok, error, _ = server.attach_app_process(cfg, "a", app, 4242)
         self.assertFalse(ok)
         self.assertIn("不属于当前用户", error)
@@ -1017,13 +1019,12 @@ class StateTests(unittest.TestCase):
         self.assertEqual(row["lastExit"]["status"], "succeeded")
         self.assertNotIn("status", task["lastExit"])
 
-    @skip_windows
     def test_watched_processes_are_current_user_only(self):
         snap = {
             10: {"uid": server.SELF_UID, "comm": "ffmpeg",
                  "args": "ffmpeg -i render-worker.mov",
                  "cpu": 1.0, "mem": 2.0, "etime": 3},
-            11: {"uid": server.SELF_UID + 1, "comm": "ffmpeg", "args": "ffmpeg -i b",
+            11: {"uid": other_uid(server.SELF_UID), "comm": "ffmpeg", "args": "ffmpeg -i b",
                  "cpu": 1.0, "mem": 2.0, "etime": 3},
         }
         with mock.patch.object(server, "ps_snapshot", return_value=snap):
@@ -1091,14 +1092,13 @@ class IconTests(unittest.TestCase):
 
 
 class ConsoleRestartTests(unittest.TestCase):
-    @skip_windows
     def test_instance_discovery_is_limited_to_same_project(self):
         snap = {
             71001: {"uid": server.SELF_UID, "args": "python3 server.py",
                     "etime": 10},
             71002: {"uid": server.SELF_UID, "args": "python3 server.py",
                     "etime": 20},
-            71003: {"uid": server.SELF_UID + 1, "args": "python3 server.py",
+            71003: {"uid": other_uid(server.SELF_UID), "args": "python3 server.py",
                     "etime": 30},
             71004: {"uid": server.SELF_UID, "args": "python3 server.py --launcher",
                     "etime": 40},

@@ -16,3 +16,13 @@ import unittest
 IS_WINDOWS = sys.platform == "win32"
 skip_windows = unittest.skipIf(
     IS_WINDOWS, "macOS-only (Unix 语义：shell 运行期 / .app / 信号 / 进程组 / 符号链接 / 权限位)")
+
+
+def other_uid(uid):
+    """构造一个不同于给定 uid 的值（Windows 为用户名 str，macOS 为 int）。"""
+    return "other-user" if isinstance(uid, str) else uid + 1
+
+
+def long_running_command():
+    """跨平台的长驻进程命令（Windows cmd 没有 Unix 的 sleep 命令）。"""
+    return '"%s" -c "import time; time.sleep(20)"' % sys.executable

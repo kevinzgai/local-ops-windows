@@ -14,9 +14,11 @@ from unittest import mock
 import server
 
 try:
-    from _win import IS_WINDOWS, skip_windows
+    from _win import (IS_WINDOWS, skip_windows, other_uid,
+                      long_running_command)
 except ImportError:  # python -m unittest tests.test_hardening 运行方式
-    from tests._win import IS_WINDOWS, skip_windows
+    from tests._win import (IS_WINDOWS, skip_windows, other_uid,
+                            long_running_command)
 
 
 class HttpHarness:
@@ -402,12 +404,12 @@ class ProcessLifecycleHardeningTests(unittest.TestCase):
             json.dump({**server.Config.DEFAULT, "apps": [app]}, f)
         return server.Config(path)
 
-    @skip_windows
     def test_manual_stop_waits_then_clears_without_recording_last_exit(self):
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(server, "LOGS_DIR", td):
             base = {**server.Config.APP_DEFAULT, "id": "deadbeef",
-                    "name": "Service", "command": "sleep 20", "cwd": td}
+                    "name": "Service", "command": long_running_command(),
+                    "cwd": td}
             cfg = self._config_with_app(td, base)
             ok, error, proc, pgid, token = server.start_app(base)
             self.assertTrue(ok, error)
@@ -425,18 +427,15 @@ class ProcessLifecycleHardeningTests(unittest.TestCase):
             finally:
                 if server.stop_target_alive(
                         {"kind": "group", "id": pgid, "members": [proc.pid]}):
-                    try:
-                        os.killpg(pgid, signal.SIGKILL)
-                    except OSError:
-                        pass
+                    # Windows 无 killpg：用平台进程树终止兜底清理。
+                    server.platform.kill_tree(proc.pid)
 
-    @skip_windows
     def test_manual_task_stop_replaces_old_success_with_stopped_result(self):
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(server, "LOGS_DIR", td):
             previous = {"code": 0, "at": 123, "durationSec": 0.1}
             base = {**server.Config.APP_DEFAULT, "id": "deadbeef",
-                    "name": "Task", "kind": "task", "command": "sleep 20",
+                    "name": "Task", "kind": "task", "command": long_running_command(),
                     "cwd": td, "lastExit": previous}
             cfg = self._config_with_app(td, base)
             ok, error, proc, pgid, token = server.start_app(base)
@@ -459,13 +458,12 @@ class ProcessLifecycleHardeningTests(unittest.TestCase):
             finally:
                 if server.stop_target_alive(
                         {"kind": "group", "id": pgid, "members": [proc.pid]}):
-                    try:
-                        os.killpg(pgid, signal.SIGKILL)
-                    except OSError:
-                        pass
+                    server.platform.kill_tree(proc.pid)
 
     @skip_windows
     def test_sigterm_timeout_retains_runtime_identity_for_retry(self):
+        # Windows 无 SIGTERM 温和停止语义：停止即 Job Object / taskkill 强杀，
+        # “忽略 SIGTERM → 超时保留管理状态”路径在 Windows 上不存在，故保持跳过。
         command = (
             "python3 -c 'import signal,time; "
             "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(20)'")

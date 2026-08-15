@@ -17,6 +17,7 @@
 - 启动环境补入常用 `Scripts`/`AppData`/`Program Files` 路径与 `PATHEXT` 关联后缀；项目识别生成 Windows 可执行命令（`python`/`py -3`/`npm`/`pnpm`/`npx`/`go run` 等）。
 - 配置/图标移至 `%APPDATA%\总控台`，日志移至 `%LOCALAPPDATA%\总控台\logs`；权限按 NTFS DACL 收紧。
 - 任务完成通知改走浏览器 Web Notification API；受保护系统进程 cwd 显示「未知（受限）」。
+- 新增开机自启（设置中心开关，写/删当前用户 HKCU Run 键，无需管理员）与桌面版托盘气泡通知（`--tray` 模式下批处理任务自然结束时服务端发托盘气泡，无需浏览器）。
 - 修复：attached 服务停止改走进程树（不再依赖 `os.getpgid`）；健康检查在 Windows 跳过 POSIX 权限位误报；`WindowsTerminal.exe` 进程溯源别名补齐。
 
 ### Added

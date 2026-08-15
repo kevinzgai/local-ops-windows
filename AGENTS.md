@@ -55,6 +55,7 @@
     "portOwner": null, "portConflict": false, "portConflictApps": []
   }],
   "watchedKeywords": ["ffmpeg"],
+  "taskNotifications": false, "autostart": false,
   "consolePort": 9600, "consolePid": 123, "consoleCwd": "/path/to/总控台",
   "version": "1.0.0", "schemaVersion": 1,
   "degraded": false, "degradedReasons": []
@@ -98,6 +99,8 @@
 ### 总控台自身
 - `POST /api/console/restart` → `{ok, pid, helperPid, port}`（先返回响应，再由独立 helper 等待旧进程退出并优先复用原端口；启动台应用不随总控台停止）
 - `POST /api/console/stop` → `{ok, pid, port}`（响应发出后关闭总控台 HTTP 服务；启动台中已经运行的独立进程组保持运行）
+- `POST /api/console/autostart` `{enabled}` → `{ok, enabled}` / `{ok:false, error}`（写/删当前用户 HKCU Run 键，经 `platform.set_autostart`，无需管理员；`/api/state` 的 `autostart` 反映状态且结果缓存，避免每 2s 轮询跑 reg query）
+- `POST /api/console/notifications` `{enabled}` → `{ok, enabled}`（持久化 `taskNotifications`；`--tray` 模式下批处理任务自然结束时由服务端发托盘气泡通知，与浏览器 Web Notification 互补）
 - `POST /api/ui/theme` `{theme}` → `{ok, theme}` / `{ok:false, error}`（校验主题 id 存在后写入 `config.json` 的 `uiTheme`；主题清单由 `/api/state` 的 `themes` 字段返回）
 
 ### 静态
@@ -120,7 +123,7 @@
 - **配置健康**：`inspect_app_health` 只解析确定无歧义的简单命令并执行 `os.stat` / 权限 / PATH 检查，不执行命令、不展开变量/通配符。相对脚本按配置 cwd（空值时 `%USERPROFILE%`）解析；复杂或动态命令返回 unknown。
 - **运行中编辑**：编辑面板打开时立即显示「停止服务」。点击只调用 stop，面板保持打开且当前草稿不变；停止成功后用户继续编辑并普通保存。名称/图标仍可在运行中直接保存。`stopBeforeUpdate:true` 保留为 API 客户端的原子停止更新能力。
 - **无终端 PATH**：`start-hidden.vbs` / `start.bat` 不读取 PowerShell profile；启动环境由 `platform_win` 显式补入常用 `Scripts / AppData / Program Files / Program Files (x86)` 路径、`PATHEXT` 关联后缀（`.EXE / .CMD / .BAT / .PS1`），保证 `python` / `node` / `npm` 等可用。启动 API 短暂探测立即退出，并把日志末行作为明确错误返回。
-- **对话框与通知**：`pick_path` 用 `powershell -NoProfile -STA -ExecutionPolicy Bypass -Command` 调用 `System.Windows.Forms.FolderBrowserDialog` / `OpenFileDialog`；任务完成通知走浏览器 Web Notification API（无服务端实现），需先打开过页面授予权限。
+- **对话框与通知**：`pick_path` 用 `powershell -NoProfile -STA -ExecutionPolicy Bypass -Command` 调用 `System.Windows.Forms.FolderBrowserDialog` / `OpenFileDialog`；任务完成通知：浏览器 Web Notification API（需先打开过页面授予权限）+ `--tray` 模式下服务端托盘气泡（`TrayIcon.notify` 走 NIF_INFO，无需浏览器）；开机自启写/删 HKCU Run 键（`set_autostart` / `get_autostart`，经 `reg.exe`）。
 - **文件锁**：单实例锁用 `msvcrt.locking`（首发字节排他锁），不再用 Unix `fcntl`；解锁依赖进程退出。
 - **signal 与 kill**：`signal` 模块常量在 Windows 上仍可用；`os.kill` 在 Windows 上调用 `TerminateProcess`；`platform_win.terminate_pids` 复用先子后父语义（`proc.terminate()` / `proc.kill()` 在 Windows 行为相同，均为 `TerminateProcess`）。
 - **日志**：单文件超过 10MB 时 copy-truncate，保留 3 份轮转备份；日志 API 从文件尾部分块读取，不将整个日志读入内存。
@@ -137,6 +140,7 @@
   "apps": [{"id": "8位hex", "name": "", "command": "", "cwd": null, "port": null, "emoji": null, "icon": null, "favicon": null, "kind": "service", "lastPid": null, "lastPgid": null, "runToken": null, "attached": false, "lastExit": null, "createdAt": 0}],
   "hidden": ["name:port"], "pinned": ["name:port"], "promoted": ["name:port"],
   "watchedKeywords": [],
+  "taskNotifications": false,
   "uiTheme": "ops"
 }
 ```

@@ -1,6 +1,7 @@
 import unittest
 from unittest import mock
 
+import platform_win
 import platform_win as pw
 
 SELF_U = "admin"
@@ -173,6 +174,24 @@ class ProcessTreeTests(unittest.TestCase):
 def psutil_no_such_proc():
     import psutil
     return psutil.NoSuchProcess(999)
+
+
+class TrayHelpersTests(unittest.TestCase):
+    def test_tray_menu_has_expected_items(self):
+        self.assertEqual(
+            [item[1] for item in platform_win.TRAY_MENU],
+            ["打开面板", "停止", "退出"])
+
+    def test_open_panel_url(self):
+        self.assertEqual(
+            platform_win.open_panel_url("127.0.0.1", 9600),
+            "http://127.0.0.1:9600/")
+
+    @mock.patch("platform_win._user32", create=True)
+    def test_message_box_calls_user32(self, user32):
+        user32.MessageBoxW.return_value = 1
+        self.assertTrue(platform_win.message_box("总控台", "错误"))
+        user32.MessageBoxW.assert_called_once_with(None, "错误", "总控台", 0x10)
 
 
 if __name__ == "__main__":

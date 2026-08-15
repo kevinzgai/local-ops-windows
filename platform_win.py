@@ -289,3 +289,51 @@ def terminate_pids(pids, force):
         except psutil.Error:
             continue
     return killed
+
+
+# ---------------------------------------------------------------- 系统托盘
+
+WM_USER = 0x0400
+WM_TRAYICON = WM_USER + 20
+WM_RBUTTONUP = 0x0205
+WM_LBUTTONDBLCLK = 0x0203
+WM_COMMAND = 0x0111
+WM_DESTROY = 0x0002
+HWND_MESSAGE = -3
+MF_STRING = 0x00000000
+MF_SEPARATOR = 0x00000800
+TPM_RIGHTBUTTON = 0x0002
+TPM_RETURNCMD = 0x0100
+NIM_ADD = 0x00000000
+NIM_MODIFY = 0x00000001
+NIM_DELETE = 0x00000002
+NIF_MESSAGE = 0x00000001
+NIF_ICON = 0x00000002
+NIF_TIP = 0x00000004
+MB_ICONERROR = 0x10
+MB_ICONINFORMATION = 0x40
+MB_OK = 0x00000000
+IDI_APPLICATION = 32512
+
+TRAY_MENU = (
+    (1, "打开面板", "open_panel"),
+    (2, "停止", "stop"),
+    (3, "退出", "quit"),
+)
+
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+_shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+
+_user32.MessageBoxW.restype = ctypes.c_int
+_user32.MessageBoxW.argtypes = (
+    wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT)
+
+
+def open_panel_url(host, port):
+    """「打开面板」使用的浏览器地址。"""
+    return "http://%s:%d/" % (host, port)
+
+
+def message_box(title, text, flags=MB_ICONERROR):
+    """无终端（windowed）下向用户展示致命错误，返回是否点了确定。"""
+    return bool(_user32.MessageBoxW(None, text, title, flags))

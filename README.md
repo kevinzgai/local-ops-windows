@@ -52,6 +52,7 @@
 
 | 方式 | 操作 | 适用场景 |
 | --- | --- | --- |
+| 桌面端 exe | 双击 `dist/总控台.exe`（需先 `python tools/build_exe.py` 打包） | 免装 Python，带系统托盘（`--tray`） |
 | 双击静默启动 | 双击 `start-hidden.vbs` | 日常使用。通过 `pythonw.exe` 启动，无控制台窗口 |
 | 双击前台启动 | 双击 `start.bat` | 想在终端窗口看实时输出 |
 | 命令行 | `python server.py` | 调试、脚本化或远程 SSH 启动 |
@@ -173,7 +174,7 @@ python server.py
 - **通知弱于 mac 通知中心**：本移植不再调用 `osascript`/`terminal-notifier`；任务完成通知改走浏览器 Web Notification API（需打开过一次页面授予权限），不起系统通知中心弹窗。
 - **受控进程组语义**：mac 版借助 shell 进程组 + `wait` 等待后台作业；Windows 上以 `cmd.exe` 锚点 + Job Object 收紧，再以 psutil 进程树作进程组成员判定，等价于但不复刻 bash `wait` 等待后台作业的语义；批处理/服务以 `cmd /c` 同步等待为准。
 - **温和停止不可靠**：Windows 对隐藏/无控制台进程组无法共享 `CTRL_BREAK_EVENT`；停止策略以「Job Object 终止 / taskkill /T /F 进程树」为主，没有真正的渐进式温和停止。
-- **没有 `.app` 启动器**：本移植不提供 `总控台.app` 与 `LSUIElement` 等价物；后台运行通过 `start-hidden.vbs` + `pythonw.exe` 实现。
+- **桌面端为便携 exe + 系统托盘，无安装包/签名/自动更新**：`tools/build_exe.py` 产出单文件 `dist/总控台.exe`（`--tray` 启用托盘，右键「打开面板/停止/退出」、双击打开面板），免装 Python；但当前不做安装包、代码签名与自动更新，未签名的 onefile exe 可能触发 SmartScreen / 杀软误报。源码模式（`start.bat` / `start-hidden.vbs` / `python server.py`）完整保留，不受影响。
 - **PATH 探测**：Windows 启动不读取 shell 配置；启动环境由平台层显式补入常用 `Scripts / AppData / Program Files` 路径与 `PATHEXT` 关联后缀，命令自动补 `.exe / .cmd / .bat`，不靠 `lsof`/`ps`/`osascript` 等只在 mac 上存在的工具。
 
 ## 升级

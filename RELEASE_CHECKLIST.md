@@ -10,7 +10,7 @@
 - [ ] 候选 commit：`____________`
 - [ ] 发布范围已明确：个人备份 / 内部交付 / 公开发布 / 商业分发
 - [ ] `CHANGELOG.md` 已将本次变更从 Unreleased 移入对应版本和日期。
-- [ ] `VERSION`、`Info.plist`、发行包名、标签和发行说明的版本一致。
+- [ ] `VERSION`、exe 打包写入的版本资源（如已配置 `--version-file`）、发行包名、标签和发行说明的版本一致。
 - [ ] 根目录 MIT License 的版权主体与发布说明一致，发行负责人已确认其适用于本次项目自有代码和文档。
 - [ ] commit 作者、提交者和签名均为真实可追溯身份，不含 `your-email@example.com` 等占位信息。
 - [ ] 如果公开仓库名称、产品名或 Bundle ID 有变化，已在首个公开 Tag 前冻结并完成一致性核对。
@@ -68,14 +68,15 @@
 - [ ] 用户向上滚动阅读日志时，自动刷新不会强制拉回底部。
 - [ ] `prefers-reduced-motion` 与高对比度/键盘焦点验收通过。
 
-## 6. macOS 安装包
+## 6. Windows 发行（单文件 exe）
 
-- [ ] 在未安装开发工具、不存在旧 `data/` 的目标 macOS 版本上完成全新安装。
-- [ ] 如果交付声称“独立 App”，发行包已捆绑 Python 和所有必要文件，单独复制 `.app` 也能运行。
-- [ ] 如果仍是“完整项目目录”交付，README 和安装界面已明确说明 Python 3.12 和目录关系。
-- [ ] 缺少或版本不符的 Python 会显示可理解、可操作的错误，不会静默退出。
-- [ ] App 具有正确的 bundle id、版本、build 号、最低系统版本和图标。
-- [ ] 对外分发包已使用 Developer ID 签名、提交公证并完成 Gatekeeper 验证。
+- [ ] 在未安装 Python / psutil 的目标 Windows 10/11 上双击 `dist/总控台.exe` 完成全新启动验收。
+- [ ] 托盘图标出现；右键菜单「打开面板 / 停止 / 退出」与双击打开面板均可用；`%LOCALAPPDATA%\总控台\logs\console.log` 有启动日志。
+- [ ] exe 内已包含 `VERSION` 文件与 `static/` 全部前端资源，解压/拷贝运行不依赖项目目录；`VERSION` 与仓库一致。
+- [ ] 端口 9600–9609 全占或实例锁冲突时，windowed 模式弹出可理解的 MessageBox 后退出，不静默失败。
+- [ ] 已在目标机器记录 SmartScreen / 杀软对未签名 onefile exe 的误报情况，发布说明给出处置方式（当前无代码签名）。
+- [ ] 同一 commit 重新运行 `tools/build_exe.py` 可复现产物（或已记录差异原因）。
+- [ ] 源码模式（`start.bat` / `start-hidden.vbs` / `python server.py`）在发布前仍通过全量检查，未被桌面端改动影响。
 
 ## 7. 许可、隐私与发行包内容
 

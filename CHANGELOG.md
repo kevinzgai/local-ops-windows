@@ -8,6 +8,17 @@
 
 ## [Unreleased]
 
+### Windows 变体（本仓库）
+
+- Windows 原生移植：后端数据面由 `lsof`/`ps`/`osascript` 改为 psutil/PowerShell/Job Object，保留 API 契约与前端零依赖。
+- 新增桌面入口：`start-hidden.vbs`（`pythonw.exe` 静默后台）、`start.bat`（前台调试/中文菜单）；单实例由 `msvcrt` 文件锁保证。
+- 新增系统托盘（`--tray`）：右键「打开面板/停止/退出」、双击打开面板；新增 PyInstaller 单文件 exe 打包（`tools/build_exe.py` → `dist/总控台.exe`）与多尺寸 `console-app-icon.ico`。
+- 受控进程停止以 Job Object 为主、`taskkill /T /F` 兜底；attached 服务按端口 + 当前 UID + 真实 cwd 认领，停止按进程树分组（Windows 无 pgid 语义）。
+- 启动环境补入常用 `Scripts`/`AppData`/`Program Files` 路径与 `PATHEXT` 关联后缀；项目识别生成 Windows 可执行命令（`python`/`py -3`/`npm`/`pnpm`/`npx`/`go run` 等）。
+- 配置/图标移至 `%APPDATA%\总控台`，日志移至 `%LOCALAPPDATA%\总控台\logs`；权限按 NTFS DACL 收紧。
+- 任务完成通知改走浏览器 Web Notification API；受保护系统进程 cwd 显示「未知（受限）」。
+- 修复：attached 服务停止改走进程树（不再依赖 `os.getpgid`）；健康检查在 Windows 跳过 POSIX 权限位误报；`WindowsTerminal.exe` 进程溯源别名补齐。
+
 ### Added
 
 - 顶栏新增 GitHub 仓库图标按钮，点击在新标签页打开项目源码仓库。

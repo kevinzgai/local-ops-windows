@@ -3962,6 +3962,9 @@ def parse_cli_args(argv):
 
 
 if __name__ == "__main__":
+    if getattr(sys, "frozen", False) and "--tray" not in sys.argv:
+        # windowed exe 无控制台，打包入口始终以托盘模式运行。
+        sys.argv.append("--tray")
     if "--prepare-storage" in sys.argv:
         # 供安装/诊断流程预先验证迁移和目录权限，不启动 HTTP。
         prepare_runtime_storage()

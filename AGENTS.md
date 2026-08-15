@@ -18,8 +18,8 @@
 - `%APPDATA%\总控台\config.json` — 用户配置；`icons/` 为应用图标。Windows 不支持 POSIX 0o700/0o600 模式位，目录与文件按 NTFS DACL 收紧为当前用户可读写
 - `%LOCALAPPDATA%\总控台\logs\{appId}.log` — 应用启动日志；`console.log` 为 `start.bat` / `start-hidden.vbs` 启动日志
 - `data/` — 旧版项目内数据，仅在新目标不存在的首次启动中复制迁移；保留不删除
-- `start.bat` — Windows 双击启动入口（前台运行；`chcp 65001` + `python server.py %*`）
-- `start-hidden.vbs` — 后台静默启动（通过 `pythonw.exe` 启动，无控制台窗口；等价于 mac 版 `总控台.app` 的 `LSUIElement` 后台用法）
+- `start.bat` — Windows 双击启动入口（前台运行；`chcp 65001` + `python server.py %*`）。**保持 ANSI/GBK 编码**：cmd 按当前代码页逐行读取批处理，转 UTF-8 会在默认 GBK 代码页下中文乱码（含中文菜单，勿改）
+- `start-hidden.vbs` — 后台静默启动（通过 `pythonw.exe` 启动，无控制台窗口；等价于 mac 版 `总控台.app` 的 `LSUIElement` 后台用法）；含中文注释的 `.ps1` 一律保存为 **UTF-8 with BOM**（PowerShell 5.1 对无 BOM 文件按 ANSI 解码，注释会乱码）
 
 ## 运行
 

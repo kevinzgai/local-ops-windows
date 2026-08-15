@@ -58,7 +58,6 @@ class PsSnapshotTests(unittest.TestCase):
 
 class ScanListenerTests(unittest.TestCase):
     def test_builds_pid_port_map(self):
-        import socket
         fake_conn = mock.Mock()
         fake_conn.status = "LISTEN"
         fake_conn.laddr = mock.Mock(ip="127.0.0.1", port=8080)

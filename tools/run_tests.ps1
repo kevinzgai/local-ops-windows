@@ -1,4 +1,4 @@
-# 等价于 macOS 的 make check：
+﻿# 等价于 macOS 的 make check：
 # 1) 语法/结构/生成文件检查  2) 单元测试
 $ErrorActionPreference = "Stop"
 $pythonCmd = $env:PY

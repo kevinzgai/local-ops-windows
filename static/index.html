@@ -587,9 +587,16 @@
     <div class="set-row">
       <div class="set-copy">
         <div class="set-name">任务完成通知</div>
-        <div class="set-hint">批处理任务结束时发送系统通知，页面切走后也能收到</div>
+        <div class="set-hint">批处理任务结束时发送通知；桌面版（托盘模式）无需浏览器也能收到</div>
       </div>
       <button class="switch" id="setNotify" type="button" role="switch" aria-checked="false" aria-label="任务完成通知"><i></i></button>
+    </div>
+    <div class="set-row">
+      <div class="set-copy">
+        <div class="set-name">开机自启</div>
+        <div class="set-hint">登录 Windows 时自动启动总控台（写入当前用户的注册表 Run 键）</div>
+      </div>
+      <button class="switch" id="setAutostart" type="button" role="switch" aria-checked="false" aria-label="开机自启"><i></i></button>
     </div>
     <div class="set-row">
       <div class="set-copy">
@@ -606,7 +613,7 @@
       <div class="set-info"><span>版本</span><span class="mono" id="setVersion">—</span></div>
       <div class="set-info"><span>端口</span><span class="mono" id="setPort">—</span></div>
       <div class="set-info"><span>工作目录</span><span class="mono set-path" id="setCwd">—</span></div>
-      <div class="set-info"><span>数据目录</span><span class="mono set-path">~/Library/Application Support/总控台</span></div>
+      <div class="set-info"><span>数据目录</span><span class="mono set-path">%APPDATA%\总控台</span></div>
     </div>
     <div class="modal-actions">
       <button class="btn" id="settingsMaskClose" type="button">关闭</button>

@@ -309,6 +309,10 @@ export function taskNotificationsEnabled() {
   return localStorage.getItem(TASK_NOTIFY_KEY) === '1'
     && Notification.permission === 'granted';
 }
+export function setTaskNotificationLocal(on) {
+  if (on) localStorage.setItem(TASK_NOTIFY_KEY, '1');
+  else localStorage.removeItem(TASK_NOTIFY_KEY);
+}
 export async function toggleTaskNotifications() {
   if (typeof Notification === 'undefined') {
     toast('当前浏览器不支持系统通知');

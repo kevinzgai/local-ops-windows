@@ -7,7 +7,7 @@
    ============================================================ */
 import { $, el, setText, setChildren, icon, state, fmtClock, taskExitStatus,
   openLayer, closeLayer, act, post, toast, escapeHtml, applyTheme,
-  taskNotificationsEnabled, toggleTaskNotifications } from './core.js';
+  taskNotificationsEnabled, setTaskNotificationLocal } from './core.js';
 import { openAppModal, openLogs, openConsoleLog, openConfirm } from './overlays.js';
 import { configuredPort } from './ports.js';
 
@@ -70,8 +70,36 @@ export function initWidgets() {
   $('#settingsMask').addEventListener('mousedown', e => {
     if (e.target === $('#settingsMask')) closeSettingsCenter();
   });
-  $('#setNotify').addEventListener('click', () => {
-    toggleTaskNotifications();
+  $('#setNotify').addEventListener('click', async () => {
+    const on = taskNotificationsEnabled()
+      || !!(state.data && state.data.taskNotifications);
+    const next = !on;
+    const result = await act(
+      post('/api/console/notifications', { enabled: next }));
+    if (!result || result.ok === false) {
+      toast('无法保存任务完成通知设置');
+      return;
+    }
+    if (next && typeof Notification !== 'undefined'
+        && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+    setTaskNotificationLocal(next && typeof Notification !== 'undefined'
+      && Notification.permission === 'granted');
+    toast(next ? '已开启任务完成通知' : '已关闭任务完成通知');
+    if (window.__poll) window.__poll();
+    syncSettings();
+  });
+  $('#setAutostart').addEventListener('click', async () => {
+    const next = !(state.data && state.data.autostart);
+    const result = await act(
+      post('/api/console/autostart', { enabled: next }));
+    if (!result || result.ok === false) {
+      toast('无法设置开机自启（注册表访问失败）');
+      return;
+    }
+    toast(next ? '已开启开机自启' : '已关闭开机自启');
+    if (window.__poll) window.__poll();
     syncSettings();
   });
   $('#setAppearance').addEventListener('click', e => {
@@ -411,10 +439,15 @@ export function closeLogsCenter() { closeLayer(logsMask); }
 const settingsMask = $('#settingsMask');
 
 function syncSettings() {
-  const on = taskNotificationsEnabled();
+  const on = taskNotificationsEnabled()
+    || !!(state.data && state.data.taskNotifications);
   const sw = $('#setNotify');
   sw.classList.toggle('on', on);
   sw.setAttribute('aria-checked', String(on));
+  const auto = !!(state.data && state.data.autostart);
+  const asw = $('#setAutostart');
+  asw.classList.toggle('on', auto);
+  asw.setAttribute('aria-checked', String(auto));
   const stored = localStorage.getItem('console-theme');
   const mode = stored === 'dark' ? 'dark' : stored === 'light' ? 'light' : 'auto';
   for (const tab of $('#setAppearance').querySelectorAll('.mini-tab')) {

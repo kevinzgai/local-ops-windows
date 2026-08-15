@@ -750,6 +750,7 @@ _ORIGIN_APP_ALIASES = {
     "clion.exe": ("CLion", "code"),
     "pycharm64.exe": ("PyCharm", "code"),
     "windows terminal.exe": ("Windows Terminal", "terminal"),
+    "windowsterminal.exe": ("Windows Terminal", "terminal"),
     "wt.exe": ("Windows Terminal", "terminal"),
 }
 _ORIGIN_MULTIPLEXERS = {}

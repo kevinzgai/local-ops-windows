@@ -100,6 +100,14 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(server.attribute_origin(99, table),
                          {"label": "VS Code", "icon": "code"})
 
+    def test_origin_windows_terminal_exe_alias(self):
+        # 实际进程名是 WindowsTerminal.exe（无空格）；别名表必须命中。
+        table = {1: (0, ""),
+                 77: (1, r"C:\Windows\System32\WindowsTerminal.exe"),
+                 99: (77, "node server.js")}
+        self.assertEqual(server.attribute_origin(99, table),
+                         {"label": "Windows Terminal", "icon": "terminal"})
+
 
 @unittest.skipUnless(WIN, "仅 Windows")
 class PickAndCommandTests(unittest.TestCase):

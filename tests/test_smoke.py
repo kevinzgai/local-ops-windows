@@ -17,8 +17,10 @@ import unittest
 import urllib.error
 import urllib.request
 
-
-IS_WINDOWS = sys.platform == "win32"
+try:
+    from _win import IS_WINDOWS
+except ImportError:  # python -m unittest tests.test_smoke 运行方式
+    from tests._win import IS_WINDOWS
 
 
 def _free_port():

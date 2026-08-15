@@ -10,9 +10,10 @@ import zipfile
 from tools import build_release as release
 from tools import check_project as project_check
 
-IS_WINDOWS = sys.platform == "win32"
-skip_windows = unittest.skipIf(
-    IS_WINDOWS, "macOS-only (symlink / Unix permission bits)")
+try:
+    from _win import IS_WINDOWS, skip_windows
+except ImportError:  # python -m unittest tests.test_release 运行方式
+    from tests._win import IS_WINDOWS, skip_windows
 
 
 class ReleaseFixtureTests(unittest.TestCase):

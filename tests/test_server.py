@@ -12,9 +12,10 @@ from unittest import mock
 
 import server
 
-IS_WINDOWS = sys.platform == "win32"
-skip_windows = unittest.skipIf(
-    IS_WINDOWS, "macOS-only path (Unix shell runtime / .app bundle / symlink / process group)")
+try:
+    from _win import IS_WINDOWS, skip_windows
+except ImportError:  # python -m unittest tests.test_server 运行方式
+    from tests._win import IS_WINDOWS, skip_windows
 
 
 class ParsingTests(unittest.TestCase):

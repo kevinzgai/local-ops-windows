@@ -194,5 +194,34 @@ class TrayHelpersTests(unittest.TestCase):
         user32.MessageBoxW.assert_called_once_with(None, "错误", "总控台", 0x10)
 
 
+class TrayIconTests(unittest.TestCase):
+    def test_dispatch_routes_to_callback(self):
+        calls = []
+        icon = platform_win.TrayIcon("127.0.0.1", 9600, {
+            "open_panel": lambda: calls.append("open"),
+            "stop": lambda: calls.append("stop"),
+            "quit": lambda: calls.append("quit"),
+        })
+        icon._dispatch(1)
+        icon._dispatch(2)
+        icon._dispatch(3)
+        self.assertEqual(calls, ["open", "stop", "quit"])
+
+    def test_dispatch_unknown_id_is_noop(self):
+        icon = platform_win.TrayIcon("127.0.0.1", 9600, {})
+        icon._dispatch(999)  # 不应抛异常
+
+    @mock.patch("platform_win.TrayIcon")
+    def test_start_tray_constructs_and_starts(self, cls):
+        cb = {"stop": lambda: None}
+        result = platform_win.start_tray("127.0.0.1", 9600, cb)
+        args, kwargs = cls.call_args
+        self.assertEqual(args[0], "127.0.0.1")
+        self.assertEqual(args[1], 9600)
+        self.assertIs(args[2], cb)
+        self.assertIs(result, cls.return_value)
+        cls.return_value.start.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

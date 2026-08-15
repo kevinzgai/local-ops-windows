@@ -9,6 +9,7 @@ psutil 是本移植唯一第三方依赖。
 import ctypes
 import os
 import subprocess
+import sys
 import threading
 import time
 from ctypes import wintypes
@@ -337,3 +338,221 @@ def open_panel_url(host, port):
 def message_box(title, text, flags=MB_ICONERROR):
     """无终端（windowed）下向用户展示致命错误，返回是否点了确定。"""
     return bool(_user32.MessageBoxW(None, text, title, flags))
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _MSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt", _POINT),
+    ]
+
+
+class _NOTIFYICONDATAW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("hWnd", wintypes.HWND),
+        ("uID", wintypes.UINT),
+        ("uFlags", wintypes.UINT),
+        ("uCallbackMessage", wintypes.UINT),
+        ("hIcon", wintypes.HICON),
+        ("szTip", wintypes.WCHAR * 128),
+        ("dwState", wintypes.DWORD),
+        ("dwStateMask", wintypes.DWORD),
+        ("szInfo", wintypes.WCHAR * 256),
+        ("uVersion", wintypes.UINT),
+        ("szInfoTitle", wintypes.WCHAR * 64),
+        ("dwInfoFlags", wintypes.DWORD),
+        ("guidItem", ctypes.c_ubyte * 16),
+        ("hBalloonIcon", wintypes.HICON),
+    ]
+
+
+class _WNDCLASSW(ctypes.Structure):
+    _fields_ = [
+        ("style", wintypes.UINT),
+        ("lpfnWndProc", ctypes.c_void_p),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", wintypes.HINSTANCE),
+        ("hIcon", wintypes.HICON),
+        ("hCursor", wintypes.HICON),
+        ("hbrBackground", wintypes.HBRUSH),
+        ("lpszMenuName", wintypes.LPCWSTR),
+        ("lpszClassName", wintypes.LPCWSTR),
+    ]
+
+
+_WNDPROC = ctypes.WINFUNCTYPE(
+    ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+    wintypes.WPARAM, wintypes.LPARAM)
+
+_user32.RegisterClassW.restype = wintypes.ATOM
+_user32.RegisterClassW.argtypes = (ctypes.POINTER(_WNDCLASSW),)
+_user32.CreateWindowExW.restype = wintypes.HWND
+_user32.CreateWindowExW.argtypes = (
+    wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID)
+_user32.DefWindowProcW.restype = ctypes.c_ssize_t
+_user32.DefWindowProcW.argtypes = (
+    wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+_user32.GetMessageW.restype = wintypes.BOOL
+_user32.GetMessageW.argtypes = (
+    ctypes.POINTER(_MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT)
+_user32.TranslateMessage.argtypes = (ctypes.POINTER(_MSG),)
+_user32.DispatchMessageW.argtypes = (ctypes.POINTER(_MSG),)
+_user32.PostMessageW.restype = wintypes.BOOL
+_user32.PostMessageW.argtypes = (
+    wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+_user32.PostQuitMessage.argtypes = (ctypes.c_int,)
+_user32.DestroyWindow.restype = wintypes.BOOL
+_user32.DestroyWindow.argtypes = (wintypes.HWND,)
+_user32.LoadIconW.restype = wintypes.HICON
+_user32.LoadIconW.argtypes = (wintypes.HINSTANCE, wintypes.LPCWSTR)
+_user32.CreatePopupMenu.restype = wintypes.HMENU
+_user32.AppendMenuW.restype = wintypes.BOOL
+_user32.AppendMenuW.argtypes = (
+    wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR)
+_user32.TrackPopupMenu.restype = wintypes.BOOL
+_user32.TrackPopupMenu.argtypes = (
+    wintypes.HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int,
+    ctypes.c_int, wintypes.HWND, ctypes.c_void_p)
+_user32.SetForegroundWindow.restype = wintypes.BOOL
+_user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+_user32.GetCursorPos.argtypes = (ctypes.POINTER(_POINT),)
+_user32.DestroyMenu.restype = wintypes.BOOL
+_user32.DestroyMenu.argtypes = (wintypes.HMENU,)
+
+_shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+_shell32.Shell_NotifyIconW.argtypes = (
+    wintypes.DWORD, ctypes.POINTER(_NOTIFYICONDATAW))
+_shell32.ExtractIconExW.restype = wintypes.UINT
+_shell32.ExtractIconExW.argtypes = (
+    wintypes.LPCWSTR, ctypes.c_int,
+    ctypes.POINTER(wintypes.HICON), ctypes.POINTER(wintypes.HICON),
+    wintypes.UINT)
+
+_ker.GetModuleHandleW.restype = wintypes.HMODULE
+_ker.GetModuleHandleW.argtypes = (wintypes.LPCWSTR,)
+
+
+class TrayIcon:
+    """Windows 系统托盘：右键菜单「打开面板/停止/退出」，双击打开面板。"""
+
+    def __init__(self, host, port, callbacks=None):
+        self.host = host
+        self.port = port
+        self.callbacks = dict(callbacks or {})
+        self._hwnd = None
+        self._thread = None
+        self._cb = None
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _dispatch(self, command_id):
+        for item_id, _label, action in TRAY_MENU:
+            if item_id == command_id:
+                callback = self.callbacks.get(action)
+                if callback is not None:
+                    callback()
+                return
+
+    def _show_menu(self):
+        menu = _user32.CreatePopupMenu()
+        for item_id, label, _action in TRAY_MENU:
+            _user32.AppendMenuW(menu, MF_STRING, item_id, label)
+        point = _POINT()
+        _user32.GetCursorPos(ctypes.byref(point))
+        _user32.SetForegroundWindow(self._hwnd)
+        command = _user32.TrackPopupMenu(
+            menu, TPM_RIGHTBUTTON | TPM_RETURNCMD,
+            point.x, point.y, 0, self._hwnd, None)
+        _user32.DestroyMenu(menu)
+        if command:
+            self._dispatch(int(command))
+
+    def _wndproc(self, hwnd, msg, wparam, lparam):
+        if msg == WM_TRAYICON:
+            if lparam == WM_RBUTTONUP:
+                self._show_menu()
+            elif lparam == WM_LBUTTONDBLCLK:
+                self._dispatch(1)
+        elif msg == WM_COMMAND:
+            self._dispatch(int(wparam & 0xFFFF))
+            return 0
+        elif msg == WM_DESTROY:
+            _user32.PostQuitMessage(0)
+            return 0
+        return _user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def _load_icon(self):
+        big = wintypes.HICON()
+        small = wintypes.HICON()
+        exe = getattr(sys, "executable", None) or ""
+        if exe:
+            _shell32.ExtractIconExW(exe, 0, ctypes.byref(big),
+                                    ctypes.byref(small), 1)
+        icon = big.value or small.value
+        if not icon:
+            icon = _user32.LoadIconW(
+                None, ctypes.cast(ctypes.c_void_p(IDI_APPLICATION),
+                                  wintypes.LPCWSTR))
+        return wintypes.HICON(icon)
+
+    def _run(self):
+        self._cb = _WNDPROC(self._wndproc)
+        hinstance = _ker.GetModuleHandleW(None)
+        wc = _WNDCLASSW()
+        wc.style = 0
+        wc.lpfnWndProc = ctypes.cast(self._cb, ctypes.c_void_p)
+        wc.hInstance = hinstance
+        wc.lpszClassName = "ConsoleTrayWindow"
+        wc.hIcon = self._load_icon()
+        wc.hCursor = wc.hIcon
+        _user32.RegisterClassW(ctypes.byref(wc))
+        self._hwnd = _user32.CreateWindowExW(
+            0, "ConsoleTrayWindow", "", 0, 0, 0, 0, 0, HWND_MESSAGE,
+            None, hinstance, None)
+        if not self._hwnd:
+            return
+        nid = _NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
+        nid.hWnd = self._hwnd
+        nid.uID = 1
+        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
+        nid.uCallbackMessage = WM_TRAYICON
+        nid.hIcon = wc.hIcon
+        nid.szTip = "总控台"
+        if not _shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
+            return
+        msg = _MSG()
+        while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            _user32.TranslateMessage(ctypes.byref(msg))
+            _user32.DispatchMessageW(ctypes.byref(msg))
+        nid2 = _NOTIFYICONDATAW()
+        nid2.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
+        nid2.hWnd = self._hwnd
+        nid2.uID = 1
+        _shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid2))
+        _user32.DestroyWindow(self._hwnd)
+
+    def stop(self):
+        if self._hwnd:
+            _user32.PostMessageW(self._hwnd, WM_DESTROY, 0, 0)
+
+
+def start_tray(host, port, callbacks):
+    """创建并启动托盘图标，返回 TrayIcon 实例（供停止时调用 stop）。"""
+    icon = TrayIcon(host, port, callbacks)
+    icon.start()
+    return icon

@@ -192,7 +192,7 @@ Expected: FAIL — `AttributeError: module 'platform_win' has no attribute 'Tray
 
 - [ ] **Step 3: 实现**
 
-在 `platform_win.py` 托盘段之后继续追加（依赖 Task 1 已定义的 `_user32`/`_shell32`/常量）：
+先在 `platform_win.py` 顶部 import 区补 `import sys`（`_load_icon` 需要 `sys.executable`），然后在托盘段之后继续追加（依赖 Task 1 已定义的 `_user32`/`_shell32`/常量）：
 
 ```python
 class _POINT(ctypes.Structure):
@@ -308,7 +308,7 @@ class TrayIcon:
         self.callbacks = dict(callbacks or {})
         self._hwnd = None
         self._thread = None
-        self._wndproc = None
+        self._cb = None
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -365,11 +365,11 @@ class TrayIcon:
         return wintypes.HICON(icon)
 
     def _run(self):
-        self._wndproc = _WNDPROC(self._wndproc)
+        self._cb = _WNDPROC(self._wndproc)
         hinstance = _ker.GetModuleHandleW(None)
         wc = _WNDCLASSW()
         wc.style = 0
-        wc.lpfnWndProc = ctypes.cast(self._wndproc, ctypes.c_void_p)
+        wc.lpfnWndProc = ctypes.cast(self._cb, ctypes.c_void_p)
         wc.hInstance = hinstance
         wc.lpszClassName = "ConsoleTrayWindow"
         wc.hIcon = self._load_icon()
@@ -535,6 +535,7 @@ class TrayIntegrationTests(unittest.TestCase):
         with mock.patch.object(server, "start_log_maintenance"), \
              mock.patch.object(server, "_ensure_private_dir"), \
              mock.patch.object(server, "open_browser_later"), \
+             mock.patch.object(server, "Config"), \
              mock.patch.object(server, "platform") as platform, \
              mock.patch.object(server, "ConsoleServer") as console_cls:
             fake_server = console_cls.return_value

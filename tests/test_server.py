@@ -1284,5 +1284,25 @@ class TrayIntegrationTests(unittest.TestCase):
             platform.start_tray.return_value.stop.assert_called_once()
 
 
+class BuildHealthWindowsTests(unittest.TestCase):
+    def test_health_ok_when_dirs_exist_on_windows(self):
+        """Windows 无 POSIX 0700/0600 语义：目录存在即可读可写即算健康。"""
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(server, "DATA_DIR", td), \
+                mock.patch.object(server, "ICONS_DIR", td), \
+                mock.patch.object(server, "LOGS_DIR", td), \
+                mock.patch.object(server, "CONFIG_PATH",
+                                  os.path.join(td, "config.json")):
+            with open(os.path.join(td, "config.json"), "w",
+                      encoding="utf-8") as f:
+                f.write("{}")
+            cfg = mock.Mock()
+            cfg.health_info.return_value = {"issues": []}
+            cfg.snapshot.return_value = {"schemaVersion": 1}
+            health = server.build_health(cfg)
+        self.assertEqual(health["status"], "ok")
+        self.assertFalse(health["degraded"])
+
+
 if __name__ == "__main__":
     unittest.main()

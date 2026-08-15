@@ -1189,7 +1189,8 @@ def build_health(cfg):
             issues.append("%s 目录不存在" % label)
         elif not os.access(path, os.R_OK | os.W_OK | os.X_OK):
             issues.append("%s 目录不可读写" % label)
-        else:
+        elif sys.platform != "win32":
+            # Windows 无 POSIX 0700 语义，隐私由 NTFS DACL 收紧保证。
             try:
                 mode = os.lstat(path).st_mode
                 if stat.S_ISLNK(mode) or mode & 0o077:
@@ -1207,7 +1208,7 @@ def build_health(cfg):
         except OSError as e:
             issues.append("无法检查 %s: %s" % (label, e))
             continue
-        if not stat.S_ISREG(mode) or mode & 0o077:
+        if sys.platform != "win32" and (not stat.S_ISREG(mode) or mode & 0o077):
             issues.append("%s 文件权限不是 0600" % label)
     degraded = bool(issues)
     snapshot = cfg.snapshot()

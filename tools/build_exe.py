@@ -13,6 +13,7 @@ ICON = STATIC / "assets" / "console-app-icon.ico"
 DIST = ROOT / "dist"
 
 DATA_FILES = [
+    ("VERSION", "."),
     ("static/index.html", "static"),
     ("static/app.js", "static"),
     ("static/base.css", "static"),
@@ -40,6 +41,9 @@ def build(name="总控台"):
         args += ["--add-data", "%s%s%s" % (src, os.pathsep, dst)]
     args.append(str(ROOT / "server.py"))
     subprocess.run(args, cwd=str(ROOT), check=True)
+    spec = ROOT / ("%s.spec" % name)
+    if spec.is_file():
+        spec.unlink()
     print("已生成: %s" % (DIST / ("%s.exe" % name)))
 
 
